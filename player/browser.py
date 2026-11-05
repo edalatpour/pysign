@@ -1,0 +1,127 @@
+import html
+import json
+import os
+import shutil
+import subprocess
+import time
+from urllib.request import ProxyHandler, build_opener
+
+from .storage import private_directory
+
+
+class BrowserError(Exception):
+    pass
+
+
+class Browser:
+    def __init__(self, state_dir, executable=None):
+        self.state_dir = state_dir
+        self.executable = executable or shutil.which("chromium") or shutil.which("chromium-browser")
+        if not self.executable:
+            raise BrowserError("Install Chromium first, or pass --browser /path/to/chromium.")
+        self.process = None
+        self.socket = None
+        self.counter = 0
+        self.current_url = None
+        self.status_content = None
+
+    def start(self):
+        import websocket
+
+        self.close()
+        profile = private_directory(self.state_dir / "browser-profile")
+        port_file = profile / "DevToolsActivePort"
+        port_file.unlink(missing_ok=True)
+        environment = os.environ.copy()
+        self.log = (self.state_dir / "chromium.log").open("a", encoding="utf-8")
+        try:
+            self.process = subprocess.Popen([
+                self.executable, "--kiosk", "--no-first-run", "--no-default-browser-check",
+                "--disable-session-crashed-bubble", "--disable-extensions",
+                "--autoplay-policy=no-user-gesture-required",
+                "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0",
+                f"--user-data-dir={profile}", "about:blank",
+            ], env=environment, stdout=self.log, stderr=self.log)
+            deadline = time.monotonic() + 30
+            opener = build_opener(ProxyHandler({}))
+            while time.monotonic() < deadline:
+                if self.process.poll() is not None:
+                    raise BrowserError("Chromium exited. See chromium.log; run as a desktop user, not root.")
+                if port_file.exists():
+                    try:
+                        port = int(port_file.read_text().splitlines()[0])
+                        with opener.open(f"http://127.0.0.1:{port}/json/list", timeout=2) as response:
+                            tabs = json.load(response)
+                        page = next((tab for tab in tabs if tab.get("type") == "page"), None)
+                        if page:
+                            self.socket = websocket.create_connection(
+                                page["webSocketDebuggerUrl"], timeout=3,
+                                suppress_origin=True, http_proxy_host=None,
+                            )
+                            self.current_url = None
+                            return
+                    except (OSError, ValueError, IndexError):
+                        pass
+                time.sleep(0.2)
+            raise BrowserError("Timed out connecting to Chromium.")
+        except (OSError, websocket.WebSocketException) as exc:
+            self.close()
+            raise BrowserError(f"Could not start Chromium: {type(exc).__name__}.") from exc
+
+    def navigate(self, url):
+        import websocket
+
+        if self.process is None or self.process.poll() is not None or self.socket is None:
+            self.start()
+        self.counter += 1
+        try:
+            self.socket.send(json.dumps({
+                "id": self.counter, "method": "Page.navigate", "params": {"url": url},
+            }))
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                response = json.loads(self.socket.recv())
+                if response.get("id") == self.counter:
+                    if "error" in response:
+                        raise BrowserError("Chromium rejected navigation.")
+                    self.current_url = url
+                    return
+            raise BrowserError("Chromium navigation timed out.")
+        except (OSError, ValueError, websocket.WebSocketException) as exc:
+            self.close()
+            raise BrowserError(f"Chromium connection failed: {type(exc).__name__}.") from exc
+
+    def status(self, heading, message):
+        content = (heading, message)
+        path = self.state_dir / "status.html"
+        if content != self.status_content:
+            path.write_text(
+                '<!doctype html><meta charset="utf-8"><title>PySign</title>'
+                '<style>body{background:#102e2a;color:#fff;font:28px system-ui;'
+                'display:grid;place-content:center;height:95vh;text-align:center}'
+                'h1{font-size:64px}p{max-width:1000px;white-space:pre-line}</style>'
+                f"<h1>{html.escape(heading)}</h1><p>{html.escape(message)}</p>",
+                encoding="utf-8",
+            )
+            path.chmod(0o600)
+        url = path.as_uri()
+        if content != self.status_content or self.current_url != url:
+            self.navigate(url)
+        self.status_content = content
+
+    def close(self):
+        self.current_url = None
+        if self.socket:
+            self.socket.close()
+            self.socket = None
+        if self.process:
+            if self.process.poll() is None:
+                self.process.terminate()
+                try:
+                    self.process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    self.process.kill()
+                    self.process.wait()
+            self.process = None
+        if getattr(self, "log", None):
+            self.log.close()

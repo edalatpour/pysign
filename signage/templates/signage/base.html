@@ -1,0 +1,30 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}PySign{% endblock %}</title>
+  <link rel="stylesheet" href="{% static 'signage/style.css' %}">
+</head>
+<body>
+  <header>
+    <a class="brand" href="{% url 'dashboard' %}">PySign <span>DISPLAY NETWORK</span></a>
+    <nav>
+      {% if user.is_authenticated %}
+        <span>My workspace</span>
+        <a href="{% url 'dashboard' %}">Displays</a>
+        <form method="post" action="{% url 'logout' %}">{% csrf_token %}<button class="quiet">Sign out</button></form>
+      {% else %}
+        <a href="{% url 'login' %}">Sign in</a>
+      {% endif %}
+    </nav>
+  </header>
+  <main>
+    {% for message in messages %}<p class="notice" role="status">{{ message }}</p>{% endfor %}
+    {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+    {% block content %}{% endblock %}
+  </main>
+  <footer>PySign / Your screens, in sync.</footer>
+</body>
+</html>

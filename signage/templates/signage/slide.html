@@ -1,0 +1,8 @@
+{% extends "signage/base.html" %}
+{% block content %}
+<section class="card narrow">
+  <a class="text-link" href="{% url 'device' device.pk %}">&larr; {{ device.name }}</a>
+  <h1>Playlist URL</h1>
+  <form method="post">{% csrf_token %}{{ form.as_p }}<button>Save URL</button></form>
+</section>
+{% endblock %}

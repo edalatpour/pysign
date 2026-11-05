@@ -1,0 +1,38 @@
+{% extends "signage/base.html" %}
+{% block title %}{{ device.name }} - PySign{% endblock %}
+{% block content %}
+<a class="text-link" href="{% url 'dashboard' %}">&larr; All displays</a>
+<div class="page-heading">
+  <div><p class="eyebrow">DISPLAY SETTINGS</p><h1>{{ device.name }}</h1>
+    <p class="muted">{% if device.online %}Online{% else %}Offline{% endif %} / Changes sync automatically.</p>
+  </div>
+</div>
+<div class="columns">
+  <section class="card">
+    <h2>Playlist</h2><p class="muted">URLs play in order, then repeat. Changes reach online players within 30 seconds.</p>
+    {% for slide in device.slides.all %}
+      <article class="slide">
+        <div><span class="eyebrow">{{ slide.position }} / {{ slide.duration }} SECONDS</span>
+          <h3>{{ slide.title }}</h3><p class="url">{{ slide.url }}</p>
+        </div>
+        <div class="actions">
+          <a href="{% url 'edit-slide' device.pk slide.pk %}">Edit</a>
+          <form method="post" action="{% url 'remove-slide' device.pk slide.pk %}">{% csrf_token %}<button class="quiet danger">Remove</button></form>
+        </div>
+      </article>
+    {% empty %}
+      <p class="empty muted">No URLs yet. Add your first page below.</p>
+    {% endfor %}
+    <h2>Add a URL</h2>
+    <form method="post" action="{% url 'add-slide' device.pk %}">{% csrf_token %}{{ slide_form.as_p }}<button>Add to playlist</button></form>
+  </section>
+  <aside>
+    <section class="card"><h2>Display name</h2><form method="post">{% csrf_token %}{{ form.as_p }}<button>Save name</button></form></section>
+    <section class="card">
+      <h2>Disconnect display</h2>
+      <p class="muted">Revokes this player's credential and deletes its playlist. Physical access is required to reset and pair it again.</p>
+      <form method="post" action="{% url 'remove-device' device.pk %}">{% csrf_token %}<button class="danger">Disconnect permanently</button></form>
+    </section>
+  </aside>
+</div>
+{% endblock %}
