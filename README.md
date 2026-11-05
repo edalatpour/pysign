@@ -27,6 +27,11 @@ order values are resolved consistently by creation order.
 
 Requires Python 3.10+.
 
+The server uses Microsoft Authentication Library (MSAL) for Entra sign-in.
+Local development uses SQLite by default; no PostgreSQL server, Docker, or Azure
+account is needed. Leave `PYSIGN_DATABASE_ENGINE` unset (or set it to `sqlite`).
+`PYSIGN_DATABASE` can override the local SQLite file path.
+
 ```sh
 python -m venv .venv
 . .venv/bin/activate
@@ -35,6 +40,21 @@ export PYSIGN_DEBUG=1
 python manage.py migrate
 python manage.py runserver
 ```
+
+On Windows PowerShell:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --only-binary=cryptography -e '.[server]'
+$env:PYSIGN_DEBUG = "1"
+python manage.py migrate
+python manage.py runserver
+```
+
+`--only-binary=cryptography` selects a prebuilt cryptography wheel from your
+configured package feed instead of requiring a local Rust/C build toolchain
+(particularly useful on Windows ARM64). It does not change the package index.
 
 Open `http://localhost:8000`. Configure Entra before signing in. Development mode
 permits HTTP and uses a development-only session secret; never expose it publicly.
@@ -65,9 +85,11 @@ export PYSIGN_ENTRA_REDIRECT_URI='http://localhost:8000/accounts/callback/'
 
 The discovery endpoint is
 `https://<subdomain>.ciamlogin.com/<tenant-id>/v2.0/.well-known/openid-configuration`.
-Sign-in uses authorization code flow with PKCE, state, and nonce. The library
-validates the signed ID token, issuer, audience, and expiration; the app additionally
-checks the tenant. Accounts are identified by `(issuer, subject)`, **never linked
+Sign-in uses MSAL's authorization code flow with PKCE, state, and nonce. The app
+uses `joserfc` to explicitly validate the ID token's RS256 signature against the
+discovered signing keys, issuer, audience, expiration, and nonce, and additionally
+checks the tenant. Pending sign-ins expire after ten minutes and are consumed on
+callback. Accounts are identified by `(issuer, subject)`, **never linked
 by email**. No Microsoft access/refresh tokens are retained after sign-in.
 Sign out ends the PySign session; it does not sign out of all Microsoft applications.
 There is deliberately no local password or Django admin sign-in.
@@ -159,6 +181,25 @@ Hardware boot, HDMI behavior, and performance must be checked on the actual Pi.
 
 ## Production deployment
 
+### Azure Container Apps (recommended)
+
+See [the Azure deployment guide](deploy/README.md) for a non-root container image,
+Bicep provisioning, private Azure PostgreSQL, Key Vault secrets, health probes,
+and separate migration/cleanup jobs. Local development continues to use SQLite.
+Cloud sessions, device state, and rate-limit counters live in PostgreSQL so that
+replicas share state; no sticky sessions or shared filesystem are required.
+
+The server selects PostgreSQL only when `PYSIGN_DATABASE_ENGINE=postgresql`.
+Set `PYSIGN_POSTGRES_NAME`, `PYSIGN_POSTGRES_HOST`, `PYSIGN_POSTGRES_USER`, and
+`PYSIGN_POSTGRES_PASSWORD`; missing values fail startup instead of falling back
+to SQLite. Optional settings are `PYSIGN_POSTGRES_PORT` (default `5432`),
+`PYSIGN_POSTGRES_SSLMODE` (default `verify-full`), and
+`PYSIGN_POSTGRES_SSLROOTCERT` (CA bundle path; supplied by the container).
+The `production` extra includes the PostgreSQL driver and Gunicorn and targets
+Linux containers, not native Windows development.
+
+### Single-host production with SQLite
+
 ```sh
 umask 077
 pip install -e '.[server,production]'
@@ -174,7 +215,8 @@ gunicorn pysign.wsgi:application --bind 127.0.0.1:8000 --workers 2
 
 Persist `PYSIGN_SECRET_KEY` rather than generating a new value at every boot.
 Run Gunicorn under your process supervisor as an unprivileged user. Put it behind
-a trusted HTTPS reverse proxy, serve `/static/` from `staticfiles/`, and do not
+a trusted HTTPS reverse proxy; WhiteNoise serves the collected `/static/` files
+from `staticfiles/`. Do not
 expose Gunicorn directly. Production defaults require HTTPS and secure cookies,
 and enable HSTS. A supervisor must supply the same configuration to management
 commands and web workers. Set `PYSIGN_DATABASE` to an absolute, backed-up SQLite
@@ -186,6 +228,10 @@ limiting intentionally uses `REMOTE_ADDR`, not untrusted forwarding headers. To
 rate-limit individual clients behind a proxy, configure a trusted WSGI/server
 integration that supplies the real client address, or enforce client-IP limits at
 the proxy. Otherwise clients share the proxy's rate-limit bucket.
+For Azure Container Apps specifically, `PYSIGN_AZURE_CONTAINER_APPS=1` enables
+HTTPS scheme handling and uses only ACA's appended, rightmost `X-Forwarded-For`
+address for rate limiting. Enable it only behind ACA ingress, not on a directly
+exposed server. Ordinary local development ignores these forwarded headers.
 Use `PYSIGN_CSRF_TRUSTED_ORIGINS` (comma-separated HTTPS origins) only if your proxy
 setup requires additional trusted origins. Avoid logging OIDC callback query
 strings or authorization headers.
@@ -235,6 +281,10 @@ that have not contacted the server in a day.
 pip install -e '.[server,player]'
 PYSIGN_DEBUG=1 python manage.py test signage.tests player.tests
 ```
+
+For native Windows server verification, activate the local virtual environment,
+set `$env:PYSIGN_DEBUG = "1"`, and run `python manage.py test signage.tests`.
+The player suite requires Linux/Raspberry Pi (`fcntl` is unavailable on Windows).
 
 Coverage includes cross-owner access on every management surface, mixed slide
 IDs, CSRF, bearer isolation, revocation, expired/single-use pairing, claim rate

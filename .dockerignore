@@ -1,0 +1,14 @@
+.git
+.venv
+.env
+.env.*
+**/__pycache__
+**/*.py[cod]
+**/*.sqlite3
+**/*.sqlite3-*
+*.egg-info
+build
+dist
+staticfiles
+deploy
+.github

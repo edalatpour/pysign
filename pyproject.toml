@@ -12,12 +12,13 @@ dependencies = []
 [project.optional-dependencies]
 server = [
     "Django>=5.2,<5.3",
-    "Authlib>=1.9.4,<2",
+    "msal>=1.39,<2",
     "joserfc>=1.6,<2",
     "requests>=2.32,<3",
+    "whitenoise>=6.9,<7",
 ]
 player = ["websocket-client>=1.8,<2"]
-production = ["gunicorn>=23,<24"]
+production = ["gunicorn>=23,<24", "psycopg[binary]>=3.2,<4"]
 
 [project.scripts]
 pysign-player = "player.__main__:main"

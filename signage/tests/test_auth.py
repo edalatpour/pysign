@@ -1,16 +1,18 @@
+import json
 import time
+from contextlib import contextmanager
 from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, urlsplit
 
-from authlib.integrations.base_client.errors import MismatchingStateError
 from django.contrib.auth import get_user_model
 from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 from joserfc import jwt
-from joserfc.errors import JoseError
 from joserfc.jwk import RSAKey
+from requests import Response
+from requests.exceptions import RequestException
 
-from signage.auth import entra_client, user_from_claims
+from signage.auth import user_from_claims
 from signage.models import ExternalIdentity
 
 TENANT = "12345678-1234-1234-1234-123456789abc"
@@ -68,32 +70,37 @@ class EntraTests(TestCase):
 
     def test_begin_uses_fixed_callback_and_rejects_open_redirect(self):
         remote = Mock()
-        from django.http import HttpResponseRedirect
-        remote.authorize_redirect.return_value = HttpResponseRedirect("https://example.ciamlogin.com/authorize")
+        remote.initiate_auth_code_flow.return_value = {
+            "auth_uri": "https://example.ciamlogin.com/authorize",
+        }
         with patch("signage.auth.entra_client", return_value=remote):
             response = self.client.post(reverse("entra-login"), {"next": "https://evil.example/"})
         self.assertEqual(response.status_code, 302)
         self.assertEqual(self.client.session["auth_next"], "/")
-        self.assertEqual(remote.authorize_redirect.call_args.args[1], AUTH_SETTINGS["ENTRA_REDIRECT_URI"])
+        self.assertEqual(
+            remote.initiate_auth_code_flow.call_args.kwargs["redirect_uri"],
+            AUTH_SETTINGS["ENTRA_REDIRECT_URI"],
+        )
 
     def test_begin_requires_csrf(self):
         client = Client(enforce_csrf_checks=True)
         self.assertEqual(client.post(reverse("entra-login")).status_code, 403)
 
     def test_callback_creates_session_only_after_validation(self):
-        remote = Mock()
-        remote.authorize_access_token.return_value = {"userinfo": self.claims()}
-        with patch("signage.auth.entra_client", return_value=remote):
-            self.assertEqual(self.client.get(reverse("entra-callback")).status_code, 302)
+        with self.mock_oidc():
+            state = self.start_login(next="/displays/")
+            response = self.finish_login(state)
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, "/displays/")
         self.assertIn("_auth_user_id", self.client.session)
-
-    def test_invalid_state_and_signature_return_no_session(self):
-        for error in [MismatchingStateError(), JoseError()]:
-            remote = Mock()
-            remote.authorize_access_token.side_effect = error
-            with patch("signage.auth.entra_client", return_value=remote):
-                self.assertEqual(self.client.get(reverse("entra-callback")).status_code, 400)
-            self.assertNotIn("_auth_user_id", self.client.session)
+        self.assertNotIn("auth_flow", self.client.session)
+        self.assertNotIn("auth_next", self.client.session)
+        self.assertEqual(set(self.client.session.keys()), {
+            "_auth_user_id", "_auth_user_backend", "_auth_user_hash",
+        })
+        body = parse_qs(self.token_requests[0].body)
+        self.assertEqual(body["code_verifier"], [self.code_verifier])
+        self.assertEqual(body["redirect_uri"], [AUTH_SETTINGS["ENTRA_REDIRECT_URI"]])
 
     def test_real_client_rejects_unsolicited_callback(self):
         self.assertEqual(self.client.get(reverse("entra-callback"), {
@@ -105,50 +112,160 @@ class EntraTests(TestCase):
     def test_missing_configuration_fails_explicitly(self):
         self.assertEqual(self.client.post(reverse("entra-login")).status_code, 503)
 
-    def oidc_remote(self):
-        remote = entra_client()
-        remote.server_metadata.update({
+    @contextmanager
+    def mock_oidc(self):
+        self.signing_key = RSAKey.generate_key(2048, parameters={"kid": "test-key"})
+        self.token_requests = []
+        now = int(time.time())
+        self.token_claims = self.claims(
+            aud=AUTH_SETTINGS["ENTRA_CLIENT_ID"], iat=now, exp=now + 600,
+        )
+        self.token_error = None
+        self.jwks_status = 200
+        metadata = {
             "issuer": ISSUER,
             "authorization_endpoint": ISSUER + "/authorize",
             "token_endpoint": ISSUER + "/token",
+            "jwks_uri": ISSUER + "/keys",
             "id_token_signing_alg_values_supported": ["RS256"],
+        }
+        keyset = {"keys": [self.signing_key.as_dict(private=False)]}
+
+        def send(session, request, **kwargs):
+            status = 200
+            if request.url.endswith("/.well-known/openid-configuration"):
+                data = metadata
+            elif request.url == metadata["jwks_uri"]:
+                data = keyset
+                status = self.jwks_status
+            elif request.url == metadata["token_endpoint"]:
+                self.token_requests.append(request)
+                data = self.token_error or {
+                    "id_token": jwt.encode(
+                        {"alg": "RS256", "kid": "test-key"}, self.token_claims, self.signing_key,
+                    ),
+                    "access_token": "not-retained",
+                    "refresh_token": "not-retained",
+                    "token_type": "Bearer", "expires_in": 600,
+                }
+            else:
+                raise AssertionError(f"Unexpected OIDC request: {request.method} {request.url}")
+            response = Response()
+            response.status_code = status
+            response._content = json.dumps(data).encode()
+            response.headers["Content-Type"] = "application/json"
+            response.url = request.url
+            return response
+
+        with patch("requests.sessions.Session.send", autospec=True, side_effect=send):
+            yield
+
+    def start_login(self, **data):
+        response = self.client.post(reverse("entra-login"), data)
+        self.assertEqual(response.status_code, 302)
+        query = parse_qs(urlsplit(response.url).query)
+        self.token_claims["nonce"] = query["nonce"][0]
+        self.code_verifier = self.client.session["auth_flow"]["code_verifier"]
+        return query["state"][0]
+
+    def finish_login(self, state, **data):
+        return self.client.get(reverse("entra-callback"), {
+            "state": state, "code": "authorization-code", **data,
         })
-        return remote
 
     def test_real_authorization_uses_state_nonce_and_pkce(self):
-        remote = self.oidc_remote()
-        with patch.object(remote, "load_server_metadata", return_value=remote.server_metadata):
-            with patch("signage.auth.entra_client", return_value=remote):
-                response = self.client.post(reverse("entra-login"))
+        with self.mock_oidc():
+            response = self.client.post(reverse("entra-login"))
         query = parse_qs(urlsplit(response.url).query)
         self.assertTrue(query["state"][0])
         self.assertTrue(query["nonce"][0])
         self.assertEqual(query["code_challenge_method"], ["S256"])
         self.assertTrue(query["code_challenge"][0])
+        self.assertEqual(set(query["scope"][0].split()), {"openid", "profile", "email"})
 
     def test_real_signed_id_token_validation(self):
-        remote = self.oidc_remote()
-        key = RSAKey.generate_key(2048, parameters={"kid": "test-key"})
-        keyset = {"keys": [key.as_dict(private=False)]}
-        now = int(time.time())
-        valid = self.claims(aud=AUTH_SETTINGS["ENTRA_CLIENT_ID"], iat=now, exp=now + 600, nonce="expected")
         cases = [
-            ({}, key, True),
-            ({"aud": "wrong-app"}, key, False),
-            ({"iss": "https://attacker.example"}, key, False),
-            ({"nonce": "wrong"}, key, False),
-            ({"exp": now - 1000}, key, False),
-            ({}, RSAKey.generate_key(2048, parameters={"kid": "test-key"}), False),
+            {"aud": "wrong-app"},
+            {"aud": [AUTH_SETTINGS["ENTRA_CLIENT_ID"], "other-app"]},
+            {"azp": "other-app"},
+            {"iss": "https://attacker.example"},
+            {"nonce": "wrong"},
+            {"nonce": None},
+            {"exp": int(time.time()) - 1000},
+            {"exp": None},
+            {"iat": int(time.time()) + 1000},
+            {"tid": "different"},
+            {"sub": ""},
         ]
-        with patch.object(remote, "load_server_metadata", return_value=remote.server_metadata):
-            with patch.object(remote, "fetch_jwk_set", return_value=keyset):
-                for overrides, signing_key, should_pass in cases:
-                    token = jwt.encode({"alg": "RS256", "kid": "test-key"}, {**valid, **overrides}, signing_key)
-                    with self.subTest(overrides=overrides, should_pass=should_pass):
-                        if should_pass:
-                            self.assertEqual(remote.parse_id_token(
-                                {"id_token": token}, nonce="expected",
-                            )["sub"], valid["sub"])
-                        else:
-                            with self.assertRaises(JoseError):
-                                remote.parse_id_token({"id_token": token}, nonce="expected")
+        for overrides in cases:
+            with self.subTest(overrides=overrides), self.mock_oidc():
+                state = self.start_login()
+                self.token_claims.update(overrides)
+                self.assertEqual(self.finish_login(state).status_code, 400)
+                self.assertNotIn("_auth_user_id", self.client.session)
+        self.assertEqual(ExternalIdentity.objects.count(), 0)
+
+    def test_multiple_audiences_with_correct_authorized_party(self):
+        with self.mock_oidc():
+            state = self.start_login()
+            self.token_claims.update(
+                aud=[AUTH_SETTINGS["ENTRA_CLIENT_ID"], "other-app"],
+                azp=AUTH_SETTINGS["ENTRA_CLIENT_ID"],
+            )
+            self.assertEqual(self.finish_login(state).status_code, 302)
+
+    def test_successful_callback_cannot_be_replayed(self):
+        with self.mock_oidc():
+            state = self.start_login()
+            self.assertEqual(self.finish_login(state).status_code, 302)
+            self.assertEqual(self.finish_login(state).status_code, 400)
+        self.assertEqual(len(self.token_requests), 1)
+
+    def test_wrong_signature_rejected(self):
+        with self.mock_oidc():
+            state = self.start_login()
+            self.signing_key = RSAKey.generate_key(2048, parameters={"kid": "test-key"})
+            self.assertEqual(self.finish_login(state).status_code, 400)
+        self.assertNotIn("_auth_user_id", self.client.session)
+
+    def test_state_mismatch_consumes_flow_without_exchanging_code(self):
+        with self.mock_oidc():
+            state = self.start_login()
+            self.assertEqual(self.finish_login("wrong-state").status_code, 400)
+            self.assertEqual(self.finish_login(state).status_code, 400)
+        self.assertEqual(self.token_requests, [])
+        self.assertNotIn("_auth_user_id", self.client.session)
+
+    def test_expired_flow_rejected_without_exchanging_code(self):
+        with self.mock_oidc():
+            state = self.start_login()
+            session = self.client.session
+            session["auth_flow"]["started_at"] -= 601
+            session.save()
+            self.assertEqual(self.finish_login(state).status_code, 400)
+        self.assertEqual(self.token_requests, [])
+
+    def test_provider_errors_and_missing_id_token_rejected(self):
+        for result in [{"error": "invalid_grant"}, {"access_token": "not-an-id-token"}]:
+            with self.subTest(result=result), self.mock_oidc():
+                state = self.start_login()
+                self.token_error = result
+                self.assertEqual(self.finish_login(state).status_code, 400)
+                self.assertNotIn("_auth_user_id", self.client.session)
+
+    def test_user_cancellation_rejected(self):
+        with self.mock_oidc():
+            state = self.start_login()
+            self.assertEqual(self.finish_login(state, code="", error="access_denied").status_code, 400)
+        self.assertEqual(self.token_requests, [])
+
+    def test_signing_key_fetch_failure_rejected(self):
+        with self.mock_oidc():
+            state = self.start_login()
+            self.jwks_status = 503
+            self.assertEqual(self.finish_login(state).status_code, 400)
+        self.assertNotIn("_auth_user_id", self.client.session)
+
+    def test_discovery_network_error_reported(self):
+        with patch("requests.sessions.Session.send", side_effect=RequestException()):
+            self.assertEqual(self.client.post(reverse("entra-login")).status_code, 502)
