@@ -65,6 +65,8 @@ class EntraTests(TestCase):
     def test_signin_has_no_local_password_form(self):
         response = self.client.get(reverse("login"))
         self.assertContains(response, "Continue with Microsoft")
+        self.assertContains(response, "Sign in - PiSign")
+        self.assertContains(response, "PiSign / Your screens, in sync.")
         self.assertNotContains(response, 'type="password"')
         self.assertEqual(self.client.get("/accounts/signup/").status_code, 404)
 
@@ -269,3 +271,75 @@ class EntraTests(TestCase):
     def test_discovery_network_error_reported(self):
         with patch("requests.sessions.Session.send", side_effect=RequestException()):
             self.assertEqual(self.client.post(reverse("entra-login")).status_code, 502)
+
+    def test_missing_session_diagnostic_does_not_log_callback_parameters(self):
+        with self.assertLogs("signage.auth", level="WARNING") as logs:
+            response = self.client.get(reverse("entra-callback"), {
+                "code": "private-code", "state": "private-state",
+            })
+        self.assertEqual(response.status_code, 400)
+        text = "\n".join(logs.output)
+        self.assertIn("session flow: Missing OAuth session", text)
+        self.assertNotIn("private-code", text)
+        self.assertNotIn("private-state", text)
+
+    def test_provider_diagnostic_logs_only_error_code_and_numeric_identifiers(self):
+        with self.mock_oidc():
+            state = self.start_login()
+            self.token_error = {
+                "error": "invalid_client",
+                "error_codes": [7000215],
+                "error_description": "private-provider-response",
+            }
+            with self.assertLogs("signage.auth", level="WARNING") as logs:
+                self.assertEqual(self.finish_login(state).status_code, 400)
+        text = "\n".join(logs.output)
+        self.assertIn("token exchange: Entra returned invalid_client; AADSTS codes: 7000215", text)
+        self.assertNotIn("private-provider-response", text)
+        self.assertNotIn(AUTH_SETTINGS["ENTRA_CLIENT_SECRET"], text)
+
+    def test_untrusted_provider_error_fields_are_not_logged(self):
+        with self.mock_oidc():
+            state = self.start_login()
+            self.token_error = {
+                "error": "private-value\ninjected-log",
+                "error_codes": ["private-value"],
+                "error_description": "private-value",
+            }
+            with self.assertLogs("signage.auth", level="WARNING") as logs:
+                self.assertEqual(self.finish_login(state).status_code, 400)
+        self.assertIn("unknown_error", "\n".join(logs.output))
+        self.assertNotIn("private-value", "\n".join(logs.output))
+
+    def test_invalid_claim_diagnostic_identifies_claim_without_its_value(self):
+        with self.mock_oidc():
+            state = self.start_login()
+            self.token_claims["aud"] = "private-wrong-audience"
+            with self.assertLogs("signage.auth", level="WARNING") as logs:
+                self.assertEqual(self.finish_login(state).status_code, 400)
+        text = "\n".join(logs.output)
+        self.assertIn("ID token validation: InvalidClaimError (aud)", text)
+        self.assertNotIn("private-wrong-audience", text)
+
+    def test_library_exception_diagnostic_excludes_sensitive_message(self):
+        for error in (ValueError("private-state"), RuntimeError("private-nonce")):
+            with self.subTest(error=type(error).__name__), self.mock_oidc():
+                state = self.start_login()
+                remote = Mock()
+                remote.acquire_token_by_auth_code_flow.side_effect = error
+                with patch("signage.auth.entra_client", return_value=remote):
+                    with self.assertLogs("signage.auth", level="WARNING") as logs:
+                        self.assertEqual(self.finish_login(state).status_code, 400)
+                text = "\n".join(logs.output)
+                self.assertIn(f"token exchange: {type(error).__name__}", text)
+                self.assertNotIn("private-", text)
+
+    def test_tenant_diagnostic_excludes_identity_values(self):
+        with self.mock_oidc():
+            state = self.start_login()
+            self.token_claims["tid"] = "private-wrong-tenant"
+            with self.assertLogs("signage.auth", level="WARNING") as logs:
+                self.assertEqual(self.finish_login(state).status_code, 400)
+        text = "\n".join(logs.output)
+        self.assertIn("account identity: Missing tenant claim or tenant does not match", text)
+        self.assertNotIn("private-wrong-tenant", text)

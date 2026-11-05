@@ -21,7 +21,7 @@ def read_json(path):
 
 def write_json(path, data):
     path = Path(path)
-    fd, temporary = tempfile.mkstemp(prefix=".pysign-", dir=path.parent)
+    fd, temporary = tempfile.mkstemp(prefix=".pisign-", dir=path.parent)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             json.dump(data, handle)

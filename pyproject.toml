@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "pysign"
+name = "pisign"
 version = "0.1.0"
 description = "Multi-user digital signage with a lightweight Raspberry Pi player"
 requires-python = ">=3.10"
@@ -21,10 +21,10 @@ player = ["websocket-client>=1.8,<2"]
 production = ["gunicorn>=23,<24", "psycopg[binary]>=3.2,<4"]
 
 [project.scripts]
-pysign-player = "player.__main__:main"
+pisign-player = "player.__main__:main"
 
 [tool.setuptools.packages.find]
-include = ["pysign*", "signage*", "player*"]
+include = ["pisign*", "signage*", "player*"]
 
 [tool.setuptools.package-data]
 signage = ["templates/signage/*.html", "static/signage/*.css"]

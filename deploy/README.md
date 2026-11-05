@@ -4,6 +4,11 @@ The application still runs locally with SQLite using the commands in the
 [main README](../README.md). Azure is a separate environment with a separate
 PostgreSQL database; deployment does not copy local SQLite data.
 
+For an existing installation, read the
+[application rename migration notes](../README.md#updating-an-existing-installation-after-the-rename)
+before deploying: the resource, database, image, and environment-variable defaults
+have changed. These templates do not rename or migrate existing Azure resources.
+
 ## What is provisioned
 
 - An Azure Container Registry (Basic, administrator login disabled).
@@ -62,18 +67,18 @@ If changing the prefix, edit `infra.bicepparam` and use the same value below.
 
 ```powershell
 az login
-$rg = "pysign-rg"
+$rg = "pisign-rg"
 $location = "eastus"
-$prefix = "pysign"
+$prefix = "pisign"
 az group create --name $rg --location $location
 
-$env:PYSIGN_POSTGRES_PASSWORD = Read-Host -MaskInput "New PostgreSQL password (16+ characters)"
-$env:PYSIGN_SECRET_KEY = .\.venv\Scripts\python.exe -c "import secrets; print(secrets.token_urlsafe(64))"
-$env:PYSIGN_ENTRA_CLIENT_SECRET = Read-Host -MaskInput "Entra application client secret"
+$env:PISIGN_POSTGRES_PASSWORD = Read-Host -MaskInput "New PostgreSQL password (16+ characters)"
+$env:PISIGN_SECRET_KEY = .\.venv\Scripts\python.exe -c "import secrets; print(secrets.token_urlsafe(64))"
+$env:PISIGN_ENTRA_CLIENT_SECRET = Read-Host -MaskInput "Entra application client secret"
 
-az deployment group create --name pysign-infra --resource-group $rg --parameters .\deploy\infra.bicepparam
-$acr = az deployment group show --name pysign-infra --resource-group $rg --query properties.outputs.registryName.value -o tsv
-$registry = az deployment group show --name pysign-infra --resource-group $rg --query properties.outputs.registryLoginServer.value -o tsv
+az deployment group create --name pisign-infra --resource-group $rg --parameters .\deploy\infra.bicepparam
+$acr = az deployment group show --name pisign-infra --resource-group $rg --query properties.outputs.registryName.value -o tsv
+$registry = az deployment group show --name pisign-infra --resource-group $rg --query properties.outputs.registryLoginServer.value -o tsv
 ```
 
 `infra.bicepparam` reads secrets from environment variables rather than putting
@@ -96,7 +101,7 @@ Do not place feed credentials in a Docker build argument or commit that file.
 ```powershell
 $pipConfig = "C:\path\to\your\approved-pip.ini"
 $tag = Get-Date -AsUTC -Format "yyyyMMddHHmmss"
-$imageTag = "pysign:$tag"
+$imageTag = "pisign:$tag"
 az acr login --name $acr
 docker buildx build --platform linux/amd64 --secret "id=pip_config,src=$pipConfig" --tag "$registry/$imageTag" --push .
 ```
@@ -112,18 +117,18 @@ explicitly. Native local development still defaults to SQLite.
 Set the non-secret Entra values. The client secret is already in Key Vault.
 
 ```powershell
-$env:PYSIGN_ENTRA_TENANT_ID = "your-external-directory-uuid"
-$env:PYSIGN_ENTRA_SUBDOMAIN = "your-tenant-subdomain"
-$env:PYSIGN_ENTRA_CLIENT_ID = "your-application-client-id"
+$env:PISIGN_ENTRA_TENANT_ID = "your-external-directory-uuid"
+$env:PISIGN_ENTRA_SUBDOMAIN = "your-tenant-subdomain"
+$env:PISIGN_ENTRA_CLIENT_ID = "your-application-client-id"
 $parameters = @(
     "prefix=$prefix"
     "imageTag=$imageTag"
-    "entraTenantId=$env:PYSIGN_ENTRA_TENANT_ID"
-    "entraSubdomain=$env:PYSIGN_ENTRA_SUBDOMAIN"
-    "entraClientId=$env:PYSIGN_ENTRA_CLIENT_ID"
+    "entraTenantId=$env:PISIGN_ENTRA_TENANT_ID"
+    "entraSubdomain=$env:PISIGN_ENTRA_SUBDOMAIN"
+    "entraClientId=$env:PISIGN_ENTRA_CLIENT_ID"
 )
 
-az deployment group create --name pysign-jobs --resource-group $rg --template-file .\deploy\runtime.bicep --parameters @parameters deployWeb=false
+az deployment group create --name pisign-jobs --resource-group $rg --template-file .\deploy\runtime.bicep --parameters @parameters deployWeb=false
 $execution = az containerapp job start --name "$prefix-migrate" --resource-group $rg --query name -o tsv
 az containerapp job execution show --name "$prefix-migrate" --resource-group $rg --job-execution-name $execution --query properties.status -o tsv
 ```
@@ -142,9 +147,9 @@ because ARM deployments are incremental.
 Only continue after the migration execution succeeds:
 
 ```powershell
-az deployment group create --name pysign-runtime --resource-group $rg --template-file .\deploy\runtime.bicep --parameters @parameters deployWeb=true
-$appUrl = az deployment group show --name pysign-runtime --resource-group $rg --query properties.outputs.appUrl.value -o tsv
-$redirectUri = az deployment group show --name pysign-runtime --resource-group $rg --query properties.outputs.redirectUri.value -o tsv
+az deployment group create --name pisign-runtime --resource-group $rg --template-file .\deploy\runtime.bicep --parameters @parameters deployWeb=true
+$appUrl = az deployment group show --name pisign-runtime --resource-group $rg --query properties.outputs.appUrl.value -o tsv
+$redirectUri = az deployment group show --name pisign-runtime --resource-group $rg --query properties.outputs.redirectUri.value -o tsv
 $appUrl
 $redirectUri
 Invoke-RestMethod "$appUrl/health/live/"
@@ -155,7 +160,7 @@ Add the exact `$redirectUri` as a **Web** redirect URI in the Entra External ID
 application and verify sign-in, pairing, playlist changes, and player polling.
 Keep the localhost callback too if you use that registration locally.
 
-Leave Container Apps built-in authentication disabled: PySign authenticates users
+Leave Container Apps built-in authentication disabled: PiSign authenticates users
 with Entra and devices with independent bearer tokens. A global interactive login
 gate would block player API requests and probes.
 
@@ -166,7 +171,7 @@ An administrator can also start that job manually.
 
 ## HTTPS, probes, and proxy boundaries
 
-`PYSIGN_AZURE_CONTAINER_APPS=1` trusts the scheme header overwritten by ACA and
+`PISIGN_AZURE_CONTAINER_APPS=1` trusts the scheme header overwritten by ACA and
 uses only the rightmost client address appended by ACA to `X-Forwarded-For`.
 Earlier addresses are untrusted. Missing/invalid ACA addresses produce a logged
 400 response instead of silently grouping clients under a proxy IP. Do not enable
@@ -183,7 +188,7 @@ headers. They disclose only status, not configuration or database errors.
 The default Azure hostname is configured in `ALLOWED_HOSTS` and the Entra callback.
 For a custom domain, bind its DNS/certificate in ACA, then update both settings
 in `runtime.bicep` and register the exact new callback with Entra. Add
-`PYSIGN_CSRF_TRUSTED_ORIGINS` only when your actual origin setup requires it;
+`PISIGN_CSRF_TRUSTED_ORIGINS` only when your actual origin setup requires it;
 normal same-origin traffic does not need it.
 
 Gunicorn logs to stdout/stderr. Its access log excludes query strings and
@@ -213,9 +218,9 @@ Do not open the database to all Azure services or the internet to bypass this.
 ## Local verification
 
 ```powershell
-$env:PYSIGN_DEBUG = "1"
-Remove-Item Env:PYSIGN_AZURE_CONTAINER_APPS -ErrorAction SilentlyContinue
-Remove-Item Env:PYSIGN_DATABASE_ENGINE -ErrorAction SilentlyContinue
+$env:PISIGN_DEBUG = "1"
+Remove-Item Env:PISIGN_AZURE_CONTAINER_APPS -ErrorAction SilentlyContinue
+Remove-Item Env:PISIGN_DATABASE_ENGINE -ErrorAction SilentlyContinue
 python -m pip install --only-binary=cryptography -e '.[server]'
 python manage.py migrate
 python manage.py test signage.tests

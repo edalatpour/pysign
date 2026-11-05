@@ -4,12 +4,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}PySign{% endblock %}</title>
+  <title>{% block title %}PiSign{% endblock %}</title>
   <link rel="stylesheet" href="{% static 'signage/style.css' %}">
 </head>
 <body>
   <header>
-    <a class="brand" href="{% url 'dashboard' %}">PySign <span>DISPLAY NETWORK</span></a>
+    <a class="brand" href="{% url 'dashboard' %}">PiSign <span>DISPLAY NETWORK</span></a>
     <nav>
       {% if user.is_authenticated %}
         <span>My workspace</span>
@@ -25,6 +25,6 @@
     {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
     {% block content %}{% endblock %}
   </main>
-  <footer>PySign / Your screens, in sync.</footer>
+  <footer>PiSign / Your screens, in sync.</footer>
 </body>
 </html>

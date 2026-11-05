@@ -1,4 +1,4 @@
-# PySign
+# PiSign
 
 A Python digital signage platform with a Django web UI/API and a lightweight
 Chromium player for Raspberry Pi Zero 2 W. Each signed-in consumer owns a private
@@ -29,14 +29,14 @@ Requires Python 3.10+.
 
 The server uses Microsoft Authentication Library (MSAL) for Entra sign-in.
 Local development uses SQLite by default; no PostgreSQL server, Docker, or Azure
-account is needed. Leave `PYSIGN_DATABASE_ENGINE` unset (or set it to `sqlite`).
-`PYSIGN_DATABASE` can override the local SQLite file path.
+account is needed. Leave `PISIGN_DATABASE_ENGINE` unset (or set it to `sqlite`).
+`PISIGN_DATABASE` can override the local SQLite file path.
 
 ```sh
 python -m venv .venv
 . .venv/bin/activate
 pip install -e '.[server]'
-export PYSIGN_DEBUG=1
+export PISIGN_DEBUG=1
 python manage.py migrate
 python manage.py runserver
 ```
@@ -45,12 +45,15 @@ On Windows PowerShell:
 
 ```powershell
 python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --only-binary=cryptography -e '.[server]'
-$env:PYSIGN_DEBUG = "1"
-python manage.py migrate
-python manage.py runserver
+.\.venv\Scripts\python.exe -m pip install --only-binary=cryptography -e '.[server]'
+$env:PISIGN_DEBUG = "1"
+.\.venv\Scripts\python.exe manage.py migrate
+.\.venv\Scripts\python.exe manage.py runserver
 ```
+
+Calling the virtual environment's Python directly avoids PowerShell activation
+script restrictions. Set your `PISIGN_ENTRA_*` variables in the same terminal
+before starting the server; environment variables are not loaded from a file.
 
 `--only-binary=cryptography` selects a prebuilt cryptography wheel from your
 configured package feed instead of requiring a local Rust/C build toolchain
@@ -58,8 +61,35 @@ configured package feed instead of requiring a local Rust/C build toolchain
 
 Open `http://localhost:8000`. Configure Entra before signing in. Development mode
 permits HTTP and uses a development-only session secret; never expose it publicly.
-For testing on your LAN, explicitly set `PYSIGN_ALLOWED_HOSTS` to include the server
+For testing on your LAN, explicitly set `PISIGN_ALLOWED_HOSTS` to include the server
 hostname/address and bind `runserver 0.0.0.0:8000`.
+
+### Updating an existing installation after the rename
+
+The application is now PiSign: the Python package is `pisign`, the player command
+is `pisign-player`, and all environment variables use the `PISIGN_` prefix.
+Stop running processes, uninstall the previous distribution by its installed
+name, and reinstall the appropriate extras. Recreate your environment variables
+with the new prefix; the previous prefix is no longer read.
+The repository checkout folder does not need to be renamed.
+
+The local SQLite filename and Django model names are unchanged, so existing
+local data remains usable. Keep the same session secret and database connection
+values under the renamed environment variables when retaining a deployment.
+
+On an existing Pi, stop the player and disable its previous desktop/labwc
+autostart entries before installing the new ones. To retain pairing and cached
+state, either move the previous state directory to `~/.local/state/pisign` or
+pass its existing location with `--state-dir`. Run `install-autostart` again
+afterward; do not leave both old and new launchers enabled.
+
+Azure resource and database defaults also use `pisign` now. Applying the new
+defaults to an existing deployment creates different resources rather than
+renaming them or migrating data. Back up existing data and plan that migration,
+or explicitly retain existing resource names and database settings in your
+deployment templates. An Entra app's display name can be changed independently;
+existing tenant/client IDs, secrets, and callback URLs do not change just because
+the application branding changed.
 
 ### Entra External ID consumer tenant
 
@@ -76,11 +106,23 @@ hostname/address and bind `runserver 0.0.0.0:8000`.
 5. Set:
 
 ```sh
-export PYSIGN_ENTRA_TENANT_ID='your-external-directory-uuid'
-export PYSIGN_ENTRA_SUBDOMAIN='your-tenant-subdomain'
-export PYSIGN_ENTRA_CLIENT_ID='your-application-client-id'
-export PYSIGN_ENTRA_CLIENT_SECRET='your-client-secret-value'
-export PYSIGN_ENTRA_REDIRECT_URI='http://localhost:8000/accounts/callback/'
+export PISIGN_ENTRA_TENANT_ID='your-external-directory-uuid'
+export PISIGN_ENTRA_SUBDOMAIN='your-tenant-subdomain'
+export PISIGN_ENTRA_CLIENT_ID='your-application-client-id'
+export PISIGN_ENTRA_CLIENT_SECRET='your-client-secret-value'
+export PISIGN_ENTRA_REDIRECT_URI='http://localhost:8000/accounts/callback/'
+```
+
+PowerShell equivalent:
+
+```powershell
+$env:PISIGN_ENTRA_TENANT_ID = "your-external-directory-uuid"
+$env:PISIGN_ENTRA_SUBDOMAIN = "your-tenant-subdomain"
+$env:PISIGN_ENTRA_CLIENT_ID = "your-application-client-id"
+$env:PISIGN_ENTRA_CLIENT_SECRET = [System.Net.NetworkCredential]::new(
+    "", (Read-Host "Entra client secret VALUE" -AsSecureString)
+).Password
+$env:PISIGN_ENTRA_REDIRECT_URI = "http://localhost:8000/accounts/callback/"
 ```
 
 The discovery endpoint is
@@ -91,8 +133,34 @@ discovered signing keys, issuer, audience, expiration, and nonce, and additional
 checks the tenant. Pending sign-ins expire after ten minutes and are consumed on
 callback. Accounts are identified by `(issuer, subject)`, **never linked
 by email**. No Microsoft access/refresh tokens are retained after sign-in.
-Sign out ends the PySign session; it does not sign out of all Microsoft applications.
+Sign out ends the PiSign session; it does not sign out of all Microsoft applications.
 There is deliberately no local password or Django admin sign-in.
+
+### Troubleshooting sign-in
+
+Always start local sign-in at `http://localhost:8000` when the registered callback
+uses `localhost`. Starting at `127.0.0.1` creates a different browser cookie scope,
+so the callback cannot recover the pending session. Do not mix browser profiles
+or reuse a callback URL from an earlier attempt.
+
+If sign-in fails, the server logs the rejection stage without exposing tokens or
+claim values:
+
+| Log stage | What to check |
+| --- | --- |
+| `session flow` | Same browser and hostname, cookies enabled, and a fresh sign-in within ten minutes. |
+| `client initialization` | Tenant configuration and connectivity to Entra discovery. |
+| `token exchange` | Provider error/AADSTS code, client secret, app registration, or rejected OAuth state/nonce. |
+| `ID token validation` | The reported claim name, token lifetime, signing keys, or network access to discovery/keys. |
+| `account identity` | Tenant claim matches the configured external tenant and the local account is active. |
+
+Only safe provider error identifiers and numeric AADSTS codes are logged; provider
+descriptions, raw exceptions, tokens, nonces, and identity values are not.
+Development-server access logs strip query strings to avoid logging authorization
+codes. When sharing diagnostics, send only the `Entra callback rejected at ...`
+line, not a callback URL or token. The MSAL recommendation to use `form_post`
+is a warning, not itself a sign-in failure; the app currently uses a GET callback
+with SameSite=Lax session cookies.
 
 ## Raspberry Pi player
 
@@ -137,14 +205,14 @@ user and using the same virtual environment:
 sudo reboot
 ```
 
-The installer creates `~/.config/autostart/pysign.desktop` for XDG desktops.
+The installer creates `~/.config/autostart/pisign.desktop` for XDG desktops.
 On Raspberry Pi OS with labwc, it also appends a launcher to
 `~/.config/labwc/autostart`, preserving existing entries. If installing before
 labwc itself, rerun the installer after installing the desktop. Multiple launches
 are prevented by a local process lock. Disable screen blanking using the OS
 display settings so the screen remains on. Do not run competing kiosk sessions.
 
-State is in `~/.local/state/pysign` (override with `--state-dir`). The directory
+State is in `~/.local/state/pisign` (override with `--state-dir`). The directory
 is mode 0700, and credentials/cache files are atomically written as 0600. The
 saved identity is bound to the server origin; it is never sent through redirects
 or to the displayed pages. Chromium uses a separate persistent profile in that
@@ -189,12 +257,12 @@ and separate migration/cleanup jobs. Local development continues to use SQLite.
 Cloud sessions, device state, and rate-limit counters live in PostgreSQL so that
 replicas share state; no sticky sessions or shared filesystem are required.
 
-The server selects PostgreSQL only when `PYSIGN_DATABASE_ENGINE=postgresql`.
-Set `PYSIGN_POSTGRES_NAME`, `PYSIGN_POSTGRES_HOST`, `PYSIGN_POSTGRES_USER`, and
-`PYSIGN_POSTGRES_PASSWORD`; missing values fail startup instead of falling back
-to SQLite. Optional settings are `PYSIGN_POSTGRES_PORT` (default `5432`),
-`PYSIGN_POSTGRES_SSLMODE` (default `verify-full`), and
-`PYSIGN_POSTGRES_SSLROOTCERT` (CA bundle path; supplied by the container).
+The server selects PostgreSQL only when `PISIGN_DATABASE_ENGINE=postgresql`.
+Set `PISIGN_POSTGRES_NAME`, `PISIGN_POSTGRES_HOST`, `PISIGN_POSTGRES_USER`, and
+`PISIGN_POSTGRES_PASSWORD`; missing values fail startup instead of falling back
+to SQLite. Optional settings are `PISIGN_POSTGRES_PORT` (default `5432`),
+`PISIGN_POSTGRES_SSLMODE` (default `verify-full`), and
+`PISIGN_POSTGRES_SSLROOTCERT` (CA bundle path; supplied by the container).
 The `production` extra includes the PostgreSQL driver and Gunicorn and targets
 Linux containers, not native Windows development.
 
@@ -203,36 +271,36 @@ Linux containers, not native Windows development.
 ```sh
 umask 077
 pip install -e '.[server,production]'
-export PYSIGN_SECRET_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(64))')"
-export PYSIGN_ALLOWED_HOSTS='signage.example.com'
-export PYSIGN_ENTRA_REDIRECT_URI='https://signage.example.com/accounts/callback/'
-# Set all the other PYSIGN_ENTRA_* variables above using your secret manager.
-unset PYSIGN_DEBUG
+export PISIGN_SECRET_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(64))')"
+export PISIGN_ALLOWED_HOSTS='signage.example.com'
+export PISIGN_ENTRA_REDIRECT_URI='https://signage.example.com/accounts/callback/'
+# Set all the other PISIGN_ENTRA_* variables above using your secret manager.
+unset PISIGN_DEBUG
 python manage.py migrate
 python manage.py collectstatic --noinput
-gunicorn pysign.wsgi:application --bind 127.0.0.1:8000 --workers 2
+gunicorn pisign.wsgi:application --bind 127.0.0.1:8000 --workers 2
 ```
 
-Persist `PYSIGN_SECRET_KEY` rather than generating a new value at every boot.
+Persist `PISIGN_SECRET_KEY` rather than generating a new value at every boot.
 Run Gunicorn under your process supervisor as an unprivileged user. Put it behind
 a trusted HTTPS reverse proxy; WhiteNoise serves the collected `/static/` files
 from `staticfiles/`. Do not
 expose Gunicorn directly. Production defaults require HTTPS and secure cookies,
 and enable HSTS. A supervisor must supply the same configuration to management
-commands and web workers. Set `PYSIGN_DATABASE` to an absolute, backed-up SQLite
+commands and web workers. Set `PISIGN_DATABASE` to an absolute, backed-up SQLite
 path outside the source/deployment directory.
 
-If the proxy terminates TLS, set `PYSIGN_TRUST_PROXY=1` **only** when it replaces
+If the proxy terminates TLS, set `PISIGN_TRUST_PROXY=1` **only** when it replaces
 client-supplied `X-Forwarded-Proto` and only the proxy can reach Gunicorn. Rate
 limiting intentionally uses `REMOTE_ADDR`, not untrusted forwarding headers. To
 rate-limit individual clients behind a proxy, configure a trusted WSGI/server
 integration that supplies the real client address, or enforce client-IP limits at
 the proxy. Otherwise clients share the proxy's rate-limit bucket.
-For Azure Container Apps specifically, `PYSIGN_AZURE_CONTAINER_APPS=1` enables
+For Azure Container Apps specifically, `PISIGN_AZURE_CONTAINER_APPS=1` enables
 HTTPS scheme handling and uses only ACA's appended, rightmost `X-Forwarded-For`
 address for rate limiting. Enable it only behind ACA ingress, not on a directly
 exposed server. Ordinary local development ignores these forwarded headers.
-Use `PYSIGN_CSRF_TRUSTED_ORIGINS` (comma-separated HTTPS origins) only if your proxy
+Use `PISIGN_CSRF_TRUSTED_ORIGINS` (comma-separated HTTPS origins) only if your proxy
 setup requires additional trusted origins. Avoid logging OIDC callback query
 strings or authorization headers.
 
@@ -279,11 +347,11 @@ that have not contacted the server in a day.
 
 ```sh
 pip install -e '.[server,player]'
-PYSIGN_DEBUG=1 python manage.py test signage.tests player.tests
+PISIGN_DEBUG=1 python manage.py test signage.tests player.tests
 ```
 
 For native Windows server verification, activate the local virtual environment,
-set `$env:PYSIGN_DEBUG = "1"`, and run `python manage.py test signage.tests`.
+set `$env:PISIGN_DEBUG = "1"`, and run `python manage.py test signage.tests`.
 The player suite requires Linux/Raspberry Pi (`fcntl` is unavailable on Windows).
 
 Coverage includes cross-owner access on every management surface, mixed slide

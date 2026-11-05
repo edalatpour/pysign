@@ -101,7 +101,7 @@ class API:
 
 class ConfigWorker(threading.Thread):
     def __init__(self, server, state_dir, name, interval=30):
-        super().__init__(name="pysign-config", daemon=True)
+        super().__init__(name="pisign-config", daemon=True)
         self.server, self.state_dir, self.name_hint = server, state_dir, name
         self.interval = interval
         self.updates = queue.Queue(maxsize=1)

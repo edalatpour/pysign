@@ -1,6 +1,6 @@
 using './infra.bicep'
 
-param prefix = 'pysign'
-param postgresAdminPassword = readEnvironmentVariable('PYSIGN_POSTGRES_PASSWORD')
-param djangoSecretKey = readEnvironmentVariable('PYSIGN_SECRET_KEY')
-param entraClientSecret = readEnvironmentVariable('PYSIGN_ENTRA_CLIENT_SECRET')
+param prefix = 'pisign'
+param postgresAdminPassword = readEnvironmentVariable('PISIGN_POSTGRES_PASSWORD')
+param djangoSecretKey = readEnvironmentVariable('PISIGN_SECRET_KEY')
+param entraClientSecret = readEnvironmentVariable('PISIGN_ENTRA_CLIENT_SECRET')

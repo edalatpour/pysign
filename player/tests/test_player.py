@@ -154,6 +154,11 @@ class PlayerTests(unittest.TestCase):
             with self.assertRaises(APIError):
                 api.call("/api/device/config/")
 
+    def test_default_state_directory_and_branding(self):
+        args = parser().parse_args(["run"])
+        self.assertEqual(args.state_dir, Path.home() / ".local/state/pisign")
+        self.assertIn("PiSign Raspberry Pi Chromium player", parser().format_help())
+
     def test_autostart_preserves_virtualenv_and_labwc_configuration(self):
         home = Path(self.temporary.name)
         labwc = home / ".config/labwc"
@@ -161,11 +166,12 @@ class PlayerTests(unittest.TestCase):
         (labwc / "autostart").write_text("existing-command &\n")
         args = parser().parse_args(["install-autostart", "--server", self.server, "--state-dir", str(self.state)])
         with patch("player.__main__.Path.home", return_value=home):
-            with patch("player.__main__.sys.executable", "/opt/pysign/.venv/bin/python"):
+            with patch("player.__main__.sys.executable", "/opt/pisign/.venv/bin/python"):
                 install_autostart(args, self.server)
                 install_autostart(args, self.server)
-        desktop = (home / ".config/autostart/pysign.desktop").read_text()
-        self.assertIn("/opt/pysign/.venv/bin/python", desktop)
+        desktop = (home / ".config/autostart/pisign.desktop").read_text()
+        self.assertIn("Name=PiSign Player", desktop)
+        self.assertIn("/opt/pisign/.venv/bin/python", desktop)
         autostart = (labwc / "autostart").read_text()
         self.assertIn("existing-command &", autostart)
         self.assertEqual(autostart.count("start-player"), 1)

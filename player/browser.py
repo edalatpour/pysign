@@ -96,7 +96,7 @@ class Browser:
         path = self.state_dir / "status.html"
         if content != self.status_content:
             path.write_text(
-                '<!doctype html><meta charset="utf-8"><title>PySign</title>'
+                '<!doctype html><meta charset="utf-8"><title>PiSign</title>'
                 '<style>body{background:#102e2a;color:#fff;font:28px system-ui;'
                 'display:grid;place-content:center;height:95vh;text-align:center}'
                 'h1{font-size:64px}p{max-width:1000px;white-space:pre-line}</style>'

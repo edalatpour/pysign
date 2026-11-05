@@ -3,7 +3,7 @@ targetScope = 'resourceGroup'
 @description('Lowercase resource prefix, starting with a letter. Reuse it for runtime.bicep.')
 @minLength(2)
 @maxLength(8)
-param prefix string = 'pysign'
+param prefix string = 'pisign'
 param location string = resourceGroup().location
 
 @secure()
@@ -17,7 +17,7 @@ param djangoSecretKey string
 @secure()
 param entraClientSecret string
 
-param postgresAdminLogin string = 'pysignadmin'
+param postgresAdminLogin string = 'pisignadmin'
 
 var suffix = uniqueString(resourceGroup().id, prefix)
 var registryName = '${replace(prefix, '-', '')}${suffix}'
@@ -103,7 +103,7 @@ resource postgres 'Microsoft.DBforPostgreSQL/flexibleServers@2024-08-01' = {
 
 resource database 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2024-08-01' = {
   parent: postgres
-  name: 'pysign'
+  name: 'pisign'
   properties: {
     charset: 'UTF8'
     collation: 'en_US.utf8'

@@ -62,7 +62,7 @@ def run_player(browser, worker, state_dir, server):
                 if fatal:
                     browser.status("Player stopped", fatal)
                 elif config is None:
-                    browser.status("Connecting to PySign", "Waiting for the server.\nCheck the network connection.")
+                    browser.status("Connecting to PiSign", "Waiting for the server.\nCheck the network connection.")
                 elif config["state"] == "unpaired":
                     code = config["code"]
                     browser.status(
@@ -71,7 +71,7 @@ def run_player(browser, worker, state_dir, server):
                         "Sign in, then enter this code. It expires in 10 minutes.",
                     )
                 elif not rotation.slides:
-                    browser.status("Ready to display", "Your display is paired.\nAdd URLs in your PySign workspace.")
+                    browser.status("Ready to display", "Your display is paired.\nAdd URLs in your PiSign workspace.")
                 else:
                     url = rotation.due(time.monotonic())
                     if url:

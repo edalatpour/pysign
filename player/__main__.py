@@ -15,10 +15,10 @@ from .storage import private_directory
 
 
 def parser():
-    result = argparse.ArgumentParser(description="PySign Raspberry Pi Chromium player")
+    result = argparse.ArgumentParser(description="PiSign Raspberry Pi Chromium player")
     result.add_argument("command", choices=["run", "install-autostart", "reset"])
     result.add_argument("--server", help="Server origin, for example https://signage.example.com")
-    result.add_argument("--state-dir", type=Path, default=Path.home() / ".local/state/pysign")
+    result.add_argument("--state-dir", type=Path, default=Path.home() / ".local/state/pisign")
     result.add_argument("--name", default=socket.gethostname()[:100])
     result.add_argument("--browser", help="Chromium executable path")
     result.add_argument("--allow-http", action="store_true", help="Development only: allow an unencrypted server")
@@ -42,9 +42,9 @@ def install_autostart(args, server):
     )
     directory = Path.home() / ".config/autostart"
     directory.mkdir(parents=True, exist_ok=True)
-    target = directory / "pysign.desktop"
+    target = directory / "pisign.desktop"
     target.write_text(
-        "[Desktop Entry]\nType=Application\nName=PySign Player\n"
+        "[Desktop Entry]\nType=Application\nName=PiSign Player\n"
         f"Exec={command}\nTerminal=false\nX-GNOME-Autostart-enabled=true\n",
         encoding="utf-8",
     )

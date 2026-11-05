@@ -2,7 +2,7 @@ targetScope = 'resourceGroup'
 
 @minLength(2)
 @maxLength(8)
-param prefix string = 'pysign'
+param prefix string = 'pisign'
 param location string = resourceGroup().location
 
 @description('Immutable repository:tag already pushed to the registry created by infra.bicep.')
@@ -70,22 +70,22 @@ var secrets = [
   }
 ]
 var env = [
-  { name: 'PYSIGN_DEBUG', value: '0' }
-  { name: 'PYSIGN_AZURE_CONTAINER_APPS', value: '1' }
-  { name: 'PYSIGN_ALLOWED_HOSTS', value: hostname }
-  { name: 'PYSIGN_SECRET_KEY', secretRef: 'django-secret-key' }
-  { name: 'PYSIGN_DATABASE_ENGINE', value: 'postgresql' }
-  { name: 'PYSIGN_POSTGRES_NAME', value: 'pysign' }
-  { name: 'PYSIGN_POSTGRES_HOST', value: postgres.properties.fullyQualifiedDomainName }
-  { name: 'PYSIGN_POSTGRES_USER', value: postgres.properties.administratorLogin }
-  { name: 'PYSIGN_POSTGRES_PASSWORD', secretRef: 'postgres-password' }
-  { name: 'PYSIGN_POSTGRES_SSLMODE', value: 'verify-full' }
-  { name: 'PYSIGN_POSTGRES_SSLROOTCERT', value: '/etc/ssl/certs/ca-certificates.crt' }
-  { name: 'PYSIGN_ENTRA_TENANT_ID', value: entraTenantId }
-  { name: 'PYSIGN_ENTRA_SUBDOMAIN', value: entraSubdomain }
-  { name: 'PYSIGN_ENTRA_CLIENT_ID', value: entraClientId }
-  { name: 'PYSIGN_ENTRA_CLIENT_SECRET', secretRef: 'entra-client-secret' }
-  { name: 'PYSIGN_ENTRA_REDIRECT_URI', value: 'https://${hostname}/accounts/callback/' }
+  { name: 'PISIGN_DEBUG', value: '0' }
+  { name: 'PISIGN_AZURE_CONTAINER_APPS', value: '1' }
+  { name: 'PISIGN_ALLOWED_HOSTS', value: hostname }
+  { name: 'PISIGN_SECRET_KEY', secretRef: 'django-secret-key' }
+  { name: 'PISIGN_DATABASE_ENGINE', value: 'postgresql' }
+  { name: 'PISIGN_POSTGRES_NAME', value: 'pisign' }
+  { name: 'PISIGN_POSTGRES_HOST', value: postgres.properties.fullyQualifiedDomainName }
+  { name: 'PISIGN_POSTGRES_USER', value: postgres.properties.administratorLogin }
+  { name: 'PISIGN_POSTGRES_PASSWORD', secretRef: 'postgres-password' }
+  { name: 'PISIGN_POSTGRES_SSLMODE', value: 'verify-full' }
+  { name: 'PISIGN_POSTGRES_SSLROOTCERT', value: '/etc/ssl/certs/ca-certificates.crt' }
+  { name: 'PISIGN_ENTRA_TENANT_ID', value: entraTenantId }
+  { name: 'PISIGN_ENTRA_SUBDOMAIN', value: entraSubdomain }
+  { name: 'PISIGN_ENTRA_CLIENT_ID', value: entraClientId }
+  { name: 'PISIGN_ENTRA_CLIENT_SECRET', secretRef: 'entra-client-secret' }
+  { name: 'PISIGN_ENTRA_REDIRECT_URI', value: 'https://${hostname}/accounts/callback/' }
 ]
 
 var jobDefinitions = [
@@ -127,7 +127,7 @@ resource jobs 'Microsoft.App/jobs@2025-01-01' = [for job in jobDefinitions: if (
     template: {
       containers: [
         {
-          name: 'pysign'
+          name: 'pisign'
           image: image
           command: ['python']
           args: job.args
@@ -160,7 +160,7 @@ resource app 'Microsoft.App/containerApps@2025-01-01' = if (deployWeb) {
     template: {
       containers: [
         {
-          name: 'pysign'
+          name: 'pisign'
           image: image
           env: env
           resources: { cpu: json('0.5'), memory: '1Gi' }

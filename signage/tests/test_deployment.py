@@ -13,22 +13,23 @@ from django.db import OperationalError
 from django.http import JsonResponse
 from django.test import Client, RequestFactory, SimpleTestCase, TestCase, override_settings
 
-from pysign.middleware import ContainerAppsProxyMiddleware
+from pisign.middleware import ContainerAppsProxyMiddleware
+from pisign.logging import RedactRequestQuery
 from signage.security import allow_request
 
 
 class ConfigurationTests(SimpleTestCase):
     def load_settings(self, **environment):
-        with patch.dict(os.environ, {"PYSIGN_DEBUG": "1", **environment}, clear=True):
-            return runpy.run_path(str(settings.BASE_DIR / "pysign" / "settings.py"))
+        with patch.dict(os.environ, {"PISIGN_DEBUG": "1", **environment}, clear=True):
+            return runpy.run_path(str(settings.BASE_DIR / "pisign" / "settings.py"))
 
     def postgres_environment(self, **overrides):
         return {
-            "PYSIGN_DATABASE_ENGINE": "postgresql",
-            "PYSIGN_POSTGRES_NAME": "pysign",
-            "PYSIGN_POSTGRES_HOST": "server.postgres.database.azure.com",
-            "PYSIGN_POSTGRES_USER": "app",
-            "PYSIGN_POSTGRES_PASSWORD": "password:with/@special?characters",
+            "PISIGN_DATABASE_ENGINE": "postgresql",
+            "PISIGN_POSTGRES_NAME": "pisign",
+            "PISIGN_POSTGRES_HOST": "server.postgres.database.azure.com",
+            "PISIGN_POSTGRES_USER": "app",
+            "PISIGN_POSTGRES_PASSWORD": "password:with/@special?characters",
             **overrides,
         }
 
@@ -39,15 +40,17 @@ class ConfigurationTests(SimpleTestCase):
         self.assertEqual(database["NAME"], str(settings.BASE_DIR / "db.sqlite3"))
         self.assertFalse(config["AZURE_CONTAINER_APPS"])
         self.assertNotIn("SECURE_PROXY_SSL_HEADER", config)
+        self.assertEqual(config["ROOT_URLCONF"], "pisign.urls")
+        self.assertEqual(config["WSGI_APPLICATION"], "pisign.wsgi.application")
 
     def test_existing_sqlite_path_override_is_preserved(self):
-        config = self.load_settings(PYSIGN_DATABASE="test-local.sqlite3")
+        config = self.load_settings(PISIGN_DATABASE="test-local.sqlite3")
         self.assertEqual(config["DATABASES"]["default"]["NAME"], "test-local.sqlite3")
 
     def test_postgresql_requires_explicit_complete_configuration(self):
         environment = self.postgres_environment()
         for field in ("NAME", "HOST", "USER", "PASSWORD"):
-            key = f"PYSIGN_POSTGRES_{field}"
+            key = f"PISIGN_POSTGRES_{field}"
             with self.subTest(field=field), self.assertRaisesMessage(ImproperlyConfigured, key):
                 self.load_settings(**{**environment, key: ""})
 
@@ -55,32 +58,32 @@ class ConfigurationTests(SimpleTestCase):
         environment = self.postgres_environment()
         database = self.load_settings(**environment)["DATABASES"]["default"]
         self.assertEqual(database["ENGINE"], "django.db.backends.postgresql")
-        self.assertEqual(database["PASSWORD"], environment["PYSIGN_POSTGRES_PASSWORD"])
+        self.assertEqual(database["PASSWORD"], environment["PISIGN_POSTGRES_PASSWORD"])
         self.assertEqual(database["OPTIONS"], {"sslmode": "verify-full", "connect_timeout": 5})
         self.assertTrue(database["CONN_HEALTH_CHECKS"])
         self.assertEqual(database["CONN_MAX_AGE"], 60)
 
     def test_postgresql_tls_certificate_and_port_configuration(self):
         config = self.load_settings(**self.postgres_environment(
-            PYSIGN_POSTGRES_SSLROOTCERT="root.crt", PYSIGN_POSTGRES_PORT="5433",
+            PISIGN_POSTGRES_SSLROOTCERT="root.crt", PISIGN_POSTGRES_PORT="5433",
         ))
         self.assertEqual(config["DATABASES"]["default"]["OPTIONS"]["sslrootcert"], "root.crt")
         self.assertEqual(config["DATABASES"]["default"]["PORT"], "5433")
 
     def test_invalid_engine_fails_instead_of_falling_back(self):
-        with self.assertRaisesMessage(ImproperlyConfigured, "PYSIGN_DATABASE_ENGINE"):
-            self.load_settings(PYSIGN_DATABASE_ENGINE="postgre")
+        with self.assertRaisesMessage(ImproperlyConfigured, "PISIGN_DATABASE_ENGINE"):
+            self.load_settings(PISIGN_DATABASE_ENGINE="postgre")
 
     def test_production_requires_stable_secret(self):
-        with self.assertRaisesMessage(ImproperlyConfigured, "PYSIGN_SECRET_KEY"):
-            self.load_settings(PYSIGN_DEBUG="0")
+        with self.assertRaisesMessage(ImproperlyConfigured, "PISIGN_SECRET_KEY"):
+            self.load_settings(PISIGN_DEBUG="0")
 
     def test_aca_explicitly_trusts_ingress_scheme(self):
-        config = self.load_settings(PYSIGN_AZURE_CONTAINER_APPS="1")
+        config = self.load_settings(PISIGN_AZURE_CONTAINER_APPS="1")
         self.assertEqual(config["SECURE_PROXY_SSL_HEADER"], ("HTTP_X_FORWARDED_PROTO", "https"))
 
     def test_generic_proxy_option_is_preserved(self):
-        config = self.load_settings(PYSIGN_TRUST_PROXY="1")
+        config = self.load_settings(PISIGN_TRUST_PROXY="1")
         self.assertEqual(config["SECURE_PROXY_SSL_HEADER"], ("HTTP_X_FORWARDED_PROTO", "https"))
         self.assertFalse(config["AZURE_CONTAINER_APPS"])
 
@@ -106,7 +109,7 @@ class ProxyTests(SimpleTestCase):
 
     def test_invalid_or_missing_address_is_rejected(self):
         for forwarded in (None, "", "192.0.2.1, invalid", "192.0.2.1:1234"):
-            with self.subTest(forwarded=forwarded), self.assertLogs("pysign.middleware", level="WARNING"):
+            with self.subTest(forwarded=forwarded), self.assertLogs("pisign.middleware", level="WARNING"):
                 self.assertEqual(self.request(forwarded).status_code, 400)
 
     @override_settings(AZURE_CONTAINER_APPS=False)
@@ -155,8 +158,8 @@ class HealthTests(TestCase):
         self.assertEqual(response.json(), {"status": "ok"})
 
     def test_readiness_failure_is_logged_without_leaking_details(self):
-        with patch("pysign.middleware.connection.cursor", side_effect=OperationalError("private details")):
-            with self.assertLogs("pysign.middleware", level="WARNING"):
+        with patch("pisign.middleware.connection.cursor", side_effect=OperationalError("private details")):
+            with self.assertLogs("pisign.middleware", level="WARNING"):
                 response = self.client.get("/health/ready/")
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json(), {"status": "unavailable"})
@@ -170,7 +173,7 @@ class HealthTests(TestCase):
                 self.assertEqual(self.client.post(path).status_code, 405)
 
     def test_ordinary_requests_still_require_valid_ingress_headers(self):
-        with self.assertLogs("pysign.middleware", level="WARNING"):
+        with self.assertLogs("pisign.middleware", level="WARNING"):
             self.assertEqual(self.client.get("/").status_code, 400)
 
     def test_forwarded_https_does_not_redirect_loop(self):
@@ -201,3 +204,30 @@ class ProductionStaticTests(SimpleTestCase):
                     self.assertEqual(response["Content-Type"].split(";")[0], "text/css")
                     self.assertEqual(response.charset, "utf-8")
                     self.assertIn("immutable", response["Cache-Control"])
+
+
+class RequestLoggingTests(SimpleTestCase):
+    def test_configured_server_logger_redacts_authorization_response(self):
+        logger = logging.getLogger("django.server")
+        with self.assertLogs("django.server", level="INFO") as logs:
+            logger.info('"%s" %s %s', (
+                "GET /accounts/callback/?code=private-code&state=private-state"
+                "&client_info=private-identity HTTP/1.1"
+            ), "400", "1216")
+        self.assertIn('"GET /accounts/callback/ HTTP/1.1" 400 1216', logs.output[0])
+        self.assertNotIn("private-", logs.output[0])
+        self.assertNotIn("?", logs.output[0])
+
+    def test_filter_handles_preformatted_requests_and_preserves_ordinary_logs(self):
+        filter_ = RedactRequestQuery()
+        for message, expected in [
+            ('"GET /accounts/callback/?code=private-code HTTP/1.1" 400 1216',
+             '"GET /accounts/callback/ HTTP/1.1" 400 1216'),
+            ('"GET /accounts/login/ HTTP/1.1" 200 1100',
+             '"GET /accounts/login/ HTTP/1.1" 200 1100'),
+        ]:
+            with self.subTest(message=message):
+                record = logging.LogRecord("django.server", logging.INFO, "", 0, message, (), None)
+                self.assertTrue(filter_.filter(record))
+                self.assertEqual(record.getMessage(), expected)
+import logging
