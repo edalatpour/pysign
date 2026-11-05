@@ -1,0 +1,15 @@
+{% extends "signage/base.html" %}
+{% block title %}Sign in - PySign{% endblock %}
+{% block content %}
+<section class="card narrow">
+  <p class="eyebrow">YOUR DISPLAY NETWORK</p>
+  <h1>Your screens.<br>One workspace.</h1>
+  <p class="muted">Manage your screens and the stories they tell.</p>
+  <form method="post" action="{% url 'entra-login' %}">
+    {% csrf_token %}
+    <input type="hidden" name="next" value="{{ request.GET.next }}">
+    <button>Continue with Microsoft</button>
+  </form>
+  <p class="muted">Secure sign-in and account creation through Microsoft Entra External ID.</p>
+</section>
+{% endblock %}

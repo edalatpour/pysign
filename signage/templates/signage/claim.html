@@ -1,0 +1,8 @@
+{% extends "signage/base.html" %}
+{% block content %}
+<section class="card narrow">
+  <p class="eyebrow">CONNECT A SCREEN</p><h1>Pair a display</h1>
+  <p class="muted">Enter the single-use code shown on your display. Codes expire after 10 minutes.</p>
+  <form method="post">{% csrf_token %}{{ form.as_p }}<button>Pair display</button></form>
+</section>
+{% endblock %}

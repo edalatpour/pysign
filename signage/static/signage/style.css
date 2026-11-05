@@ -1,0 +1,55 @@
+:root { color-scheme: light; --ink: #172f32; --muted: #647779; --line: #dce5e2; --accent: #176f60; }
+* { box-sizing: border-box; }
+body { margin: 0; background: #f3f6f3; color: var(--ink); font: 16px/1.6 system-ui, sans-serif; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+header { min-height: 84px; background: #fff; border-bottom: 1px solid var(--line); padding: 18px 5%; display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.brand { color: var(--ink); font-size: 27px; font-weight: 800; letter-spacing: -1px; }
+.brand span { display: block; color: var(--muted); font-size: 9px; letter-spacing: 2px; }
+nav, .actions { display: flex; align-items: center; gap: 22px; }
+nav { font-size: 14px; flex-wrap: wrap; }
+nav form, .actions form { margin: 0; }
+main { max-width: 1240px; margin: 48px auto 80px; padding: 0 28px; min-height: 65vh; }
+h1 { margin: 4px 0 8px; font-size: clamp(30px, 4vw, 42px); letter-spacing: -1.5px; line-height: 1.2; }
+h2 { font-size: 21px; margin: 0 0 10px; }
+h3 { margin: 5px 0; font-size: 18px; }
+.muted { color: var(--muted); }
+.eyebrow { color: var(--accent); font-size: 11px; font-weight: 750; letter-spacing: 2px; margin: 0 0 12px; }
+.page-heading { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 32px; }
+.card { background: white; border: 1px solid var(--line); border-radius: 14px; padding: 28px; box-shadow: 0 4px 18px #172f3204; }
+.narrow { max-width: 520px; margin: 60px auto; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 24px; }
+.columns { display: grid; grid-template-columns: 2fr 1fr; gap: 24px; }
+aside .card { margin-bottom: 24px; }
+.display { color: var(--ink); transition: border-color .2s; }
+.display:hover { border-color: var(--accent); text-decoration: none; }
+.screen-icon { height: 130px; display: grid; place-items: center; border-radius: 9px; background: #e7f0eb; color: #468477; font: 12px monospace; letter-spacing: 3px; margin-bottom: 20px; border: 8px solid #d6e5dc; }
+.badge { display: inline-block; font-size: 11px; padding: 3px 10px; background: #eff1ef; border-radius: 30px; color: var(--muted); }
+.online { color: #176f60; background: #e5f3e8; }
+.text-link { font-size: 14px; font-weight: 650; }
+.empty { padding: 40px; }
+button, .button { display: inline-block; background: var(--accent); color: white; border: 0; border-radius: 7px; padding: 11px 20px; font: inherit; font-size: 14px; font-weight: 650; cursor: pointer; }
+.button:hover, button:hover { filter: brightness(.92); text-decoration: none; }
+.quiet { background: transparent; color: var(--accent); padding: 0; }
+button.danger { background: #a53d36; }
+.quiet.danger { background: transparent; color: #a53d36; }
+label { display: block; margin-bottom: 6px; font-size: 14px; font-weight: 650; }
+input { width: 100%; padding: 11px; border: 1px solid #bccdc6; border-radius: 6px; font: inherit; background: #fff; color: var(--ink); }
+input:focus { outline: 2px solid #81b9a7; outline-offset: 2px; }
+.helptext { display: block; margin-top: 6px; color: var(--muted); font-size: 12px; }
+form ul { color: var(--muted); font-size: 12px; padding-left: 20px; }
+.errorlist, .error { color: #a53d36; }
+.notice, .error { padding: 14px 20px; border-radius: 7px; background: #e3efe6; }
+.error { background: #fae9e7; }
+.slide { display: flex; justify-content: space-between; gap: 20px; padding: 22px 0; border-bottom: 1px solid var(--line); margin-bottom: 20px; }
+.slide > div { min-width: 0; }
+.url { font-size: 13px; overflow-wrap: anywhere; color: var(--muted); margin: 0; }
+.actions { gap: 14px; font-size: 13px; flex-shrink: 0; }
+footer { color: var(--muted); border-top: 1px solid var(--line); padding: 20px 5%; font-size: 12px; }
+@media (max-width: 760px) {
+  header, .page-heading { align-items: flex-start; flex-direction: column; }
+  .columns { grid-template-columns: 1fr; }
+  main { padding: 0 16px; margin-top: 30px; }
+  .card { padding: 22px; }
+  .slide { flex-direction: column; }
+}

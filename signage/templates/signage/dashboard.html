@@ -1,0 +1,24 @@
+{% extends "signage/base.html" %}
+{% block content %}
+<div class="page-heading">
+  <div><p class="eyebrow">WORKSPACE</p><h1>Your displays</h1><p class="muted">A clear view of every screen you own.</p></div>
+  <a class="button" href="{% url 'claim' %}">+ Pair a display</a>
+</div>
+<div class="grid">
+{% for device in devices %}
+  <a class="card display" href="{% url 'device' device.pk %}">
+    <div class="screen-icon">WEB / {{ forloop.counter|stringformat:"02d" }}</div>
+    <p class="badge {% if device.online %}online{% endif %}">{% if device.online %}Online{% else %}Offline{% endif %}</p>
+    <h2>{{ device.name }}</h2>
+    <p class="muted">Last seen: {{ device.last_seen|date:"M j, H:i"|default:"Never" }} UTC</p>
+    <span class="text-link">Manage display &rarr;</span>
+  </a>
+{% empty %}
+  <section class="card empty">
+    <h2>Your network starts here.</h2>
+    <p class="muted">Start the player on your Raspberry Pi, then enter the code shown on its screen.</p>
+    <a class="button" href="{% url 'claim' %}">Pair your first display</a>
+  </section>
+{% endfor %}
+</div>
+{% endblock %}
