@@ -77,14 +77,30 @@ With the player installed, connect to it using:
 python -m player run --server https://pisign.braveplant-d8d95ba6.centralus.azurecontainerapps.io
 ```
 
-On macOS, with Google Chrome installed in Applications and your player virtual
-environment activated, pass Chrome's executable explicitly:
+For local player testing on macOS, with Python 3.15 installed and Google Chrome
+installed in Applications, check your Python version first:
 
 ```sh
-python -m player run \
+python3.15 --version
+```
+
+Then run these commands from the repository root to create a separate player
+virtual environment, install the player, and start it with Chrome's executable
+explicitly:
+
+```sh
+python3.15 -m venv .venv-player
+.venv-player/bin/python -m pip install -e '.[player]'
+.venv-player/bin/python -m player run \
   --server https://pisign.braveplant-d8d95ba6.centralus.azurecontainerapps.io \
   --browser "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 ```
+
+Calling the virtual environment's Python directly avoids needing activation.
+For subsequent starts, run only the final command. After pulling updates that
+change player dependencies, rerun the installation command before restarting.
+Using `.venv-player` leaves any existing `.venv` untouched. Python 3.15 is used
+here for local testing; the player requires Python 3.10 or newer.
 
 The player still requires an explicit `--server`; this URL is documented here,
 not hardcoded as its default.
@@ -308,7 +324,7 @@ configured interval. There is no guarantee of seamless transitions for arbitrary
 third-party pages.
 
 URL content displays a click-through PiSign watermark: a 100 px-wide logo at 65%
-opacity and an opaque black-and-white QR code inside the same translucent dark
+opacity centered above an opaque black-and-white QR code inside the same translucent dark
 backing, inset 16 px from the bottom-right corner. The QR opens the current page
 URL, including redirects, query strings, and fragments; in-page URL changes are
 checked once a second. It is generated locally, with a four-module white quiet

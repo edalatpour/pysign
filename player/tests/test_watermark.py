@@ -114,7 +114,7 @@ class WatermarkIntegrationTests(unittest.TestCase):
         self.wait_for(
             f"document.getElementById('pisign-watermark').dataset.qrUrl === {json.dumps(url)}"
         )
-        qr_svg, logo = self.svg_nodes()
+        logo, qr_svg = self.svg_nodes()
         matrix = segno.make(url, error="m", micro=False, encoding="utf-8", eci=True,
                             boost_error=False).matrix
         size = len(matrix) + 8
@@ -131,6 +131,13 @@ class WatermarkIntegrationTests(unittest.TestCase):
         model = self.browser._command("DOM.getBoxModel", {"nodeId": qr_svg["nodeId"]})["model"]
         self.assertEqual(model["width"], max(100, size * 3))
         self.assertEqual(model["height"], model["width"])
+        logo_model = self.browser._command("DOM.getBoxModel", {"nodeId": logo["nodeId"]})["model"]
+        self.assertAlmostEqual(model["border"][1] - logo_model["border"][5], 8, delta=0.1)
+        self.assertAlmostEqual(
+            (model["border"][0] + model["border"][2]) / 2,
+            (logo_model["border"][0] + logo_model["border"][2]) / 2,
+            delta=0.1,
+        )
         self.assertIn("background: rgb(255, 255, 255)", attributes["style"])
         self.assertIn("opacity: 0.65", dict(zip(logo["attributes"][::2],
                                                logo["attributes"][1::2]))["style"])
@@ -151,12 +158,12 @@ class WatermarkIntegrationTests(unittest.TestCase):
         size = len(segno.make(self.origin + "/content", error="m", micro=False,
                               encoding="utf-8", eci=True, boost_error=False).matrix) + 8
         self.assertEqual(metrics, {
-            "width": 124 + max(100, size * 3), "right": 16, "bottom": 16,
+            "width": 16 + max(100, size * 3), "right": 16, "bottom": 16,
             "opacity": "1", "pointerEvents": "none",
             "inert": True, "shadowClosed": True, "clickThrough": True,
         })
         self.assert_qr(self.origin + "/content")
-        _, svg = self.svg_nodes()
+        svg, _ = self.svg_nodes()
         model = self.browser._command("DOM.getBoxModel", {"nodeId": svg["nodeId"]})["model"]
         self.assertEqual(model["width"], 100)
         self.assertGreater(model["height"], 30)

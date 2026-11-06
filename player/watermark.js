@@ -27,6 +27,7 @@ function (logo) {
         "user-select": "none",
         "z-index": "2147483647",
         display: "flex",
+        "flex-direction": "column",
         "align-items": "center",
         gap: "8px",
         animation: "none",
@@ -93,7 +94,7 @@ function (logo) {
         qrSvg.style.setProperty("width", `${Math.max(100, size * 3)}px`);
         qrSvg.style.setProperty("height", `${Math.max(100, size * 3)}px`);
         qrSvg.style.setProperty("flex-shrink", "0");
-        shadow.prepend(qrSvg);
+        shadow.append(qrSvg);
         host.dataset.qrUrl = url;
         return true;
     };
