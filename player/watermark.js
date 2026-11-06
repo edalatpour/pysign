@@ -16,17 +16,19 @@ function (logo) {
         position: "fixed",
         right: "16px",
         bottom: "16px",
-        width: "116px",
+        width: "max-content",
         "max-width": "calc(100vw - 32px)",
         "box-sizing": "border-box",
         padding: "6px 8px",
         "border-radius": "8px",
-        background: "rgba(20, 43, 50, 0.72)",
-        opacity: "0.65",
+        background: "rgba(20, 43, 50, 0.468)",
+        opacity: "1",
         "pointer-events": "none",
         "user-select": "none",
         "z-index": "2147483647",
-        display: "block",
+        display: "flex",
+        "align-items": "center",
+        gap: "8px",
         animation: "none",
         transition: "none",
     };
@@ -49,9 +51,52 @@ function (logo) {
     const shadow = host.attachShadow({mode: "closed"});
     const svg = createSvg(logo);
     svg.style.setProperty("display", "block");
-    svg.style.setProperty("width", "100%");
+    svg.style.setProperty("width", "100px");
     svg.style.setProperty("height", "auto");
+    svg.style.setProperty("opacity", "0.65");
+    svg.style.setProperty("flex-shrink", "0");
     shadow.append(svg);
+
+    let qrSvg = null;
+    globalThis.__pisignUpdateQr = function (url, matrix) {
+        // Navigation can finish between reading the URL and delivering its QR.
+        if (url !== location.href) {
+            return false;
+        }
+        if (qrSvg) {
+            qrSvg.remove();
+            qrSvg = null;
+        }
+        if (!matrix) {
+            delete host.dataset.qrUrl;
+            return true;
+        }
+        const size = matrix.length + 8;
+        let path = "";
+        for (let y = 0; y < matrix.length; y++) {
+            for (let x = 0; x < matrix.length; x++) {
+                if (matrix[y][x]) {
+                    path += `M${x + 4},${y + 4}h1v1h-1z`;
+                }
+            }
+        }
+        qrSvg = createSvg({
+            tag: "svg", attributes: {
+                viewBox: `0 0 ${size} ${size}`, "shape-rendering": "crispEdges",
+            }, text: "", children: [{
+                tag: "path", attributes: {d: path, fill: "#000"}, text: "", children: [],
+            }],
+        });
+        // Four white modules on every side are the QR quiet zone.
+        qrSvg.style.setProperty("background", "#fff");
+        qrSvg.style.setProperty("display", "block");
+        qrSvg.style.setProperty("width", `${Math.max(100, size * 3)}px`);
+        qrSvg.style.setProperty("height", `${Math.max(100, size * 3)}px`);
+        qrSvg.style.setProperty("flex-shrink", "0");
+        shadow.prepend(qrSvg);
+        host.dataset.qrUrl = url;
+        return true;
+    };
 
     const observer = new MutationObserver(mount);
     function mount() {

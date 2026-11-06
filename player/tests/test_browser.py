@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from player.browser import Browser, BrowserError
+from player.runtime import run_player
 
 
 class BrowserWatermarkTests(unittest.TestCase):
@@ -94,3 +95,74 @@ class BrowserWatermarkTests(unittest.TestCase):
         self.assertIn("Pair &amp; sign in", content)
         self.assertIn('alt="PiSign"', content)
         self.assertNotIn("pisign-watermark", content)
+
+    def qr_responses(self, url, rendered=True):
+        return [
+            {"frameTree": {"frame": {"id": "main", "url": url}}},
+            {"executionContextId": 7},
+            {"result": {"value": url}},
+            {"result": {"value": rendered}},
+        ]
+
+    def test_qr_uses_actual_url_and_caches_unchanged_content(self):
+        self.browser.socket = Mock()
+        url = "https://example.com/redirected?query=1#section"
+        with patch.object(self.browser, "_command", side_effect=self.qr_responses(url)) as command:
+            self.browser.update_watermark()
+            expression = command.call_args.args[1]["expression"]
+            self.assertIn(json.dumps(url), expression)
+            self.assertEqual(command.call_args.args[1]["contextId"], 7)
+        self.assertEqual(self.browser.qr_location, (7, url))
+        self.browser.qr_checked_at = 0
+        with patch.object(self.browser, "_command", side_effect=self.qr_responses(url)[:3]) as command:
+            self.browser.update_watermark()
+            self.assertEqual(command.call_count, 3)
+
+    def test_qr_rate_limit_and_local_status_exclusion(self):
+        self.browser.socket = Mock()
+        with patch("player.browser.time.monotonic", return_value=10):
+            with patch.object(self.browser, "_command", return_value={
+                "frameTree": {"frame": {"id": "main", "url": "file:///status.html"}},
+            }) as command:
+                self.browser.update_watermark()
+                self.browser.update_watermark()
+                command.assert_called_once_with("Page.getFrameTree", {})
+
+    def test_qr_overflow_is_logged_and_hidden(self):
+        self.browser.socket = Mock()
+        url = "https://example.com/?value=" + "a" * 4000
+        with patch.object(self.browser, "_command", side_effect=self.qr_responses(url)) as command:
+            with self.assertLogs("player.browser", level="WARNING"):
+                self.browser.update_watermark()
+            self.assertIn(", null)", command.call_args.args[1]["expression"])
+        self.assertEqual(self.browser.qr_location, (7, url))
+
+    def test_qr_navigation_race_retries_and_errors_are_explicit(self):
+        self.browser.socket = Mock()
+        with patch.object(self.browser, "_command",
+                          side_effect=self.qr_responses("https://example.com", rendered=False)):
+            self.browser.update_watermark()
+        self.assertIsNone(self.browser.qr_location)
+        self.browser.qr_checked_at = 0
+        responses = self.qr_responses("https://example.com")
+        responses[-1] = {"exceptionDetails": {"text": "Error"}}
+        with patch.object(self.browser, "_command", side_effect=responses):
+            with self.assertRaisesRegex(BrowserError, "render the watermark QR"):
+                self.browser.update_watermark()
+
+    def test_running_player_refreshes_qr_between_slide_rotations(self):
+        worker = Mock()
+        config = {"state": "paired", "slides": [
+            {"url": "https://example.com", "duration": 30},
+        ]}
+        worker.updates.get_nowait.return_value = ("config", config)
+        browser = Mock()
+        browser.process.poll.return_value = None
+        with patch("player.runtime.cached_config", return_value=config):
+            with patch("player.runtime.time.monotonic", side_effect=[0, 1]):
+                with patch("player.runtime.time.sleep", side_effect=[None, KeyboardInterrupt]):
+                    with self.assertRaises(KeyboardInterrupt):
+                        run_player(browser, worker, self.browser.state_dir, "https://pisign.example.com")
+        browser.navigate.assert_called_once_with("https://example.com")
+        self.assertEqual(browser.update_watermark.call_count, 2)
+        browser.close.assert_called_once()

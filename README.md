@@ -307,9 +307,15 @@ loading or have less usable screen time. Repeating a single URL reloads it at it
 configured interval. There is no guarantee of seamless transitions for arbitrary
 third-party pages.
 
-URL content displays a click-through PiSign watermark: a 100 px-wide logo on a
-small translucent dark backing, inset 16 px from the bottom-right corner at 65%
-opacity. It does not resize the page or intercept clicks, scrolling, or keyboard
+URL content displays a click-through PiSign watermark: a 100 px-wide logo at 65%
+opacity and an opaque black-and-white QR code inside the same translucent dark
+backing, inset 16 px from the bottom-right corner. The QR opens the current page
+URL, including redirects, query strings, and fragments; in-page URL changes are
+checked once a second. It is generated locally, with a four-module white quiet
+zone and at least three pixels per module (longer URLs need a larger code).
+URLs exceeding QR capacity are logged and omit the QR, keeping the logo.
+Scanning does not bypass authentication or private-network access requirements.
+It does not resize the page or intercept clicks, scrolling, or keyboard
 focus. The watermark is installed in Chromium's isolated script world on each
 navigation (including redirects and reloads), restored if its element is removed,
 and reinstalled after browser restarts. It uses bundled artwork without extra

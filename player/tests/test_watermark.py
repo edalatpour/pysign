@@ -9,6 +9,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 
+import segno
+
 from player.browser import Browser
 
 
@@ -85,6 +87,7 @@ class WatermarkIntegrationTests(unittest.TestCase):
     def wait_for(self, expression):
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
+            self.browser.update_watermark()
             if self.evaluate(expression):
                 return
             time.sleep(0.05)
@@ -93,6 +96,44 @@ class WatermarkIntegrationTests(unittest.TestCase):
     def open_content(self, path="/content"):
         self.browser.navigate(self.origin + path)
         self.wait_for("document.readyState === 'complete' && !!document.getElementById('pisign-watermark')")
+        self.wait_for("document.getElementById('pisign-watermark').dataset.qrUrl === location.href")
+
+    def svg_nodes(self):
+        self.browser._command("DOM.enable", {})
+        tree = self.browser._command("DOM.getDocument", {"depth": -1, "pierce": True})
+
+        def nodes(node):
+            if node.get("localName") == "svg":
+                yield node
+            for child in node.get("children", []) + node.get("shadowRoots", []):
+                yield from nodes(child)
+
+        return list(nodes(tree["root"]))
+
+    def assert_qr(self, url):
+        self.wait_for(
+            f"document.getElementById('pisign-watermark').dataset.qrUrl === {json.dumps(url)}"
+        )
+        qr_svg, logo = self.svg_nodes()
+        matrix = segno.make(url, error="m", micro=False, encoding="utf-8", eci=True,
+                            boost_error=False).matrix
+        size = len(matrix) + 8
+        attributes = dict(zip(qr_svg["attributes"][::2], qr_svg["attributes"][1::2]))
+        self.assertEqual(attributes["viewBox"], f"0 0 {size} {size}")
+        path, = qr_svg["children"]
+        path_attributes = dict(zip(path["attributes"][::2], path["attributes"][1::2]))
+        expected = "".join(
+            f"M{x + 4},{y + 4}h1v1h-1z"
+            for y, row in enumerate(matrix) for x, dark in enumerate(row) if dark
+        )
+        self.assertEqual(path_attributes["d"], expected)
+        self.assertEqual(path_attributes["fill"], "#000")
+        model = self.browser._command("DOM.getBoxModel", {"nodeId": qr_svg["nodeId"]})["model"]
+        self.assertEqual(model["width"], max(100, size * 3))
+        self.assertEqual(model["height"], model["width"])
+        self.assertIn("background: rgb(255, 255, 255)", attributes["style"])
+        self.assertIn("opacity: 0.65", dict(zip(logo["attributes"][::2],
+                                               logo["attributes"][1::2]))["style"])
 
     def test_strict_csp_geometry_and_click_through(self):
         self.open_content()
@@ -107,20 +148,15 @@ class WatermarkIntegrationTests(unittest.TestCase):
                 clickThrough: document.elementFromPoint(rect.x + 5, rect.y + 5) !== host,
             };
         })()""")
+        size = len(segno.make(self.origin + "/content", error="m", micro=False,
+                              encoding="utf-8", eci=True, boost_error=False).matrix) + 8
         self.assertEqual(metrics, {
-            "width": 116, "right": 16, "bottom": 16, "opacity": "0.65", "pointerEvents": "none",
+            "width": 124 + max(100, size * 3), "right": 16, "bottom": 16,
+            "opacity": "1", "pointerEvents": "none",
             "inert": True, "shadowClosed": True, "clickThrough": True,
         })
-        self.browser._command("DOM.enable", {})
-        tree = self.browser._command("DOM.getDocument", {"depth": -1, "pierce": True})
-
-        def svg_nodes(node):
-            if node.get("localName") == "svg":
-                yield node
-            for child in node.get("children", []) + node.get("shadowRoots", []):
-                yield from svg_nodes(child)
-
-        svg, = svg_nodes(tree["root"])
+        self.assert_qr(self.origin + "/content")
+        _, svg = self.svg_nodes()
         model = self.browser._command("DOM.getBoxModel", {"nodeId": svg["nodeId"]})["model"]
         self.assertEqual(model["width"], 100)
         self.assertGreater(model["height"], 30)
@@ -140,6 +176,26 @@ class WatermarkIntegrationTests(unittest.TestCase):
                 "document.querySelector('iframe').contentDocument.querySelectorAll('#pisign-watermark').length"
             ), 0)
             self.assertEqual(self.evaluate("location.pathname"), "/content")
+            self.assert_qr(self.origin + "/content")
+
+    def test_qr_tracks_history_query_and_fragment_changes(self):
+        self.open_content()
+        for method, path in (
+            ("pushState", "/next?title=caf%C3%A9&mode=show#section"),
+            ("replaceState", "/updated?value=%26%3C%3E#second"),
+        ):
+            self.evaluate(f"history.{method}({{}}, '', {json.dumps(path)})")
+            self.assert_qr(self.origin + path)
+        self.evaluate("history.back()")
+        self.wait_for("location.pathname === '/content'")
+        self.assert_qr(self.origin + "/content")
+        self.evaluate("location.hash = 'final'")
+        self.assert_qr(self.origin + "/content#final")
+
+    def test_qr_grows_for_long_urls(self):
+        url = self.origin + "/content?value=" + "a" * 500
+        self.open_content("/content?value=" + "a" * 500)
+        self.assert_qr(url)
 
     def test_removal_body_replacement_and_fullscreen_container(self):
         self.open_content()

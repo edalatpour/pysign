@@ -1,6 +1,7 @@
 import base64
 import html
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -10,6 +11,9 @@ from urllib.request import ProxyHandler, build_opener
 from xml.etree import ElementTree
 
 from .storage import private_directory
+
+
+logger = logging.getLogger(__name__)
 
 
 def watermark_script():
@@ -43,6 +47,8 @@ class Browser:
         self.counter = 0
         self.current_url = None
         self.status_content = None
+        self.qr_checked_at = 0
+        self.qr_location = None
 
     def start(self):
         import websocket
@@ -120,6 +126,47 @@ class Browser:
             self.start()
         self._command("Page.navigate", {"url": url})
         self.current_url = url
+        self.qr_checked_at = 0
+
+    def update_watermark(self):
+        import segno
+
+        now = time.monotonic()
+        if self.socket is None or now - self.qr_checked_at < 1:
+            return
+        self.qr_checked_at = now
+        frame = self._command("Page.getFrameTree", {})["frameTree"]["frame"]
+        if not frame["url"].startswith(("http://", "https://")):
+            return
+        context = self._command("Page.createIsolatedWorld", {
+            "frameId": frame["id"], "worldName": "PiSign watermark",
+        })["executionContextId"]
+        result = self._command("Runtime.evaluate", {
+            "expression": "location.href", "contextId": context, "returnByValue": True,
+        })
+        if "exceptionDetails" in result:
+            raise BrowserError("Could not read the watermark content URL.")
+        url = result["result"]["value"]
+        if self.qr_location == (context, url):
+            return
+        try:
+            qr = segno.make(url, error="m", micro=False, encoding="utf-8", eci=True,
+                            boost_error=False)
+            matrix = [list(row) for row in qr.matrix]
+        except segno.DataOverflowError:
+            logger.warning("Content URL exceeds QR capacity; hiding the watermark QR code.")
+            matrix = None
+        result = self._command("Runtime.evaluate", {
+            "expression": (
+                "typeof globalThis.__pisignUpdateQr === 'function' && "
+                f"globalThis.__pisignUpdateQr({json.dumps(url)}, {json.dumps(matrix)})"
+            ),
+            "contextId": context, "returnByValue": True,
+        })
+        if "exceptionDetails" in result:
+            raise BrowserError("Could not render the watermark QR code.")
+        if result["result"].get("value"):
+            self.qr_location = (context, url)
 
     def status(self, heading, message):
         content = (heading, message)
@@ -150,6 +197,8 @@ class Browser:
 
     def close(self):
         self.current_url = None
+        self.qr_checked_at = 0
+        self.qr_location = None
         if self.socket:
             self.socket.close()
             self.socket = None
