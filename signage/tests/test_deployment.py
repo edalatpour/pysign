@@ -1,9 +1,11 @@
 import os
 import runpy
+from importlib.util import find_spec
 from contextlib import closing
 from io import StringIO
 from tempfile import TemporaryDirectory
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
+from unittest import skipUnless
 
 from django.conf import settings
 from django.contrib.staticfiles.storage import staticfiles_storage
@@ -74,6 +76,49 @@ class ConfigurationTests(SimpleTestCase):
         with self.assertRaisesMessage(ImproperlyConfigured, "PISIGN_DATABASE_ENGINE"):
             self.load_settings(PISIGN_DATABASE_ENGINE="postgre")
 
+    def sql_environment(self, **overrides):
+        return {
+            "PISIGN_DATABASE_ENGINE": "mssql",
+            "PISIGN_SQL_NAME": "pisign",
+            "PISIGN_SQL_HOST": "existing.database.windows.net",
+            "PISIGN_SQL_CLIENT_ID": "11111111-1111-1111-1111-111111111111",
+            **overrides,
+        }
+
+    def test_azure_sql_requires_complete_configuration(self):
+        for field in ("NAME", "HOST", "CLIENT_ID"):
+            key = f"PISIGN_SQL_{field}"
+            with self.subTest(field=field), self.assertRaisesMessage(ImproperlyConfigured, key):
+                self.load_settings(**self.sql_environment(**{key: ""}))
+
+    def test_azure_sql_uses_encrypted_managed_identity_connections(self):
+        config = self.load_settings(**self.sql_environment())
+        database = config["DATABASES"]["default"]
+        self.assertEqual(database["ENGINE"], "pisign.azuresql")
+        self.assertEqual(database["NAME"], "pisign")
+        self.assertEqual(database["HOST"], "existing.database.windows.net")
+        self.assertEqual(database["OPTIONS"]["driver"], "ODBC Driver 18 for SQL Server")
+        self.assertEqual(database["OPTIONS"]["extra_params"], "Encrypt=yes;TrustServerCertificate=no")
+        self.assertEqual(database["OPTIONS"]["managed_identity_client_id"], self.sql_environment()["PISIGN_SQL_CLIENT_ID"])
+        self.assertEqual(database["OPTIONS"]["connection_retries"], 0)
+        self.assertEqual(database["OPTIONS"]["connection_timeout"], 5)
+        self.assertEqual(database["OPTIONS"]["query_timeout"], 5)
+        self.assertEqual(database["CONN_MAX_AGE"], 0)
+        self.assertFalse(config["DATABASE_CONNECTION_POOLING"])
+        self.assertEqual(config["SCHEMA_TO_INSPECT"], "'pisign'")
+        self.assertNotIn("PASSWORD", database)
+        self.assertNotIn("TOKEN", database)
+
+    def test_azure_sql_migration_query_timeout_override(self):
+        config = self.load_settings(**self.sql_environment(PISIGN_SQL_QUERY_TIMEOUT="60"))
+        self.assertEqual(config["DATABASES"]["default"]["OPTIONS"]["query_timeout"], 60)
+        self.assertEqual(config["DATABASES"]["default"]["OPTIONS"]["connection_timeout"], 5)
+
+    def test_azure_sql_rejects_invalid_query_timeouts(self):
+        for value in ("", "0", "-1", "1.5", "invalid"):
+            with self.subTest(value=value), self.assertRaisesMessage(ImproperlyConfigured, "PISIGN_SQL_QUERY_TIMEOUT"):
+                self.load_settings(**self.sql_environment(PISIGN_SQL_QUERY_TIMEOUT=value))
+
     def test_production_requires_stable_secret(self):
         with self.assertRaisesMessage(ImproperlyConfigured, "PISIGN_SECRET_KEY"):
             self.load_settings(PISIGN_DEBUG="0")
@@ -86,6 +131,140 @@ class ConfigurationTests(SimpleTestCase):
         config = self.load_settings(PISIGN_TRUST_PROXY="1")
         self.assertEqual(config["SECURE_PROXY_SSL_HEADER"], ("HTTP_X_FORWARDED_PROTO", "https"))
         self.assertFalse(config["AZURE_CONTAINER_APPS"])
+
+
+@skipUnless(find_spec("mssql") and find_spec("azure") and find_spec("azure.identity"), "Install the azure-sql extra for backend tests.")
+class AzureSQLBackendTests(SimpleTestCase):
+    def test_string_collation_is_scoped_to_new_pisign_columns(self):
+        from pisign.azuresql.base import DatabaseWrapper
+        from signage.models import ExternalIdentity
+
+        wrapper = DatabaseWrapper({
+            "ENGINE": "pisign.azuresql",
+            "NAME": "shared",
+            "OPTIONS": {"managed_identity_client_id": "test-client"},
+        }, alias="azure-sql-test")
+        with (
+            patch.object(DatabaseWrapper, "sql_server_version", 2022),
+            patch.object(wrapper, "cursor", side_effect=AssertionError("Unexpected live database access")),
+        ):
+            with wrapper.schema_editor(collect_sql=True, atomic=False) as editor:
+                editor.create_model(ExternalIdentity)
+        sql = " ".join(editor.collected_sql)
+        self.assertRegex(sql, r"\[issuer\] nvarchar\(512\)\s+COLLATE Latin1_General_100_BIN2")
+        self.assertRegex(sql, r"\[subject\] nvarchar\(255\)\s+COLLATE Latin1_General_100_BIN2")
+        self.assertNotIn("ALTER DATABASE", sql)
+        self.assertIsNone(ExternalIdentity._meta.get_field("subject").db_collation)
+
+    def test_string_column_changes_keep_case_sensitive_collation(self):
+        from pisign.azuresql.base import DatabaseWrapper
+        from signage.models import ExternalIdentity
+
+        wrapper = DatabaseWrapper({"NAME": "shared", "OPTIONS": {}}, alias="azure-sql-test")
+        editor = wrapper.schema_editor(collect_sql=True, atomic=False)
+        field = ExternalIdentity._meta.get_field("subject")
+        with patch("mssql.schema.DatabaseSchemaEditor._alter_column_type_sql") as alter:
+            editor._alter_column_type_sql(ExternalIdentity, field, field, "nvarchar(256)", None, None)
+        self.assertEqual(alter.call_args.args[-1], "Latin1_General_100_BIN2")
+
+    @override_settings(SCHEMA_TO_INSPECT="'pisign'")
+    def test_introspection_limits_migration_history_to_pisign_schema(self):
+        from pisign.azuresql.base import DatabaseWrapper
+
+        wrapper = DatabaseWrapper({"NAME": "shared", "OPTIONS": {}}, alias="azure-sql-test")
+        cursor = MagicMock()
+        cursor.fetchall.return_value = [("django_migrations", "BASE TABLE", None)]
+        tables = wrapper.introspection.get_table_list(cursor)
+        self.assertEqual([table.name for table in tables], ["django_migrations"])
+        self.assertIn("TABLE_SCHEMA = 'pisign'", cursor.execute.call_args.args[0])
+
+    def test_connection_requires_isolated_user_and_default_schema(self):
+        from pisign.azuresql.base import DatabaseWrapper
+
+        for identity in (("dbo", "pisign-app"), ("pisign", "other-app"), None):
+            with self.subTest(identity=identity):
+                wrapper = DatabaseWrapper({"NAME": "shared", "OPTIONS": {}}, alias="azure-sql-test")
+                connection = MagicMock()
+                wrapper.connection = connection
+                connection.cursor.return_value.__enter__.return_value.fetchone.return_value = identity
+                with patch("mssql.base.DatabaseWrapper.init_connection_state"):
+                    with self.assertLogs("pisign.azuresql.base", level="WARNING"):
+                        with self.assertRaisesMessage(OperationalError, "default schema pisign"):
+                            wrapper.init_connection_state()
+                connection.close.assert_called_once()
+                self.assertIsNone(wrapper.connection)
+
+        wrapper = DatabaseWrapper({"NAME": "shared", "OPTIONS": {}}, alias="azure-sql-test")
+        connection = MagicMock()
+        wrapper.connection = connection
+        connection.cursor.return_value.__enter__.return_value.fetchone.return_value = ("pisign", "pisign-app")
+        with patch("mssql.base.DatabaseWrapper.init_connection_state"):
+            wrapper.init_connection_state()
+        connection.close.assert_not_called()
+
+    def test_nullable_pairing_code_uses_a_filtered_unique_index(self):
+        from pisign.azuresql.base import DatabaseWrapper
+        from signage.models import Device
+
+        wrapper = DatabaseWrapper({
+            "ENGINE": "pisign.azuresql",
+            "NAME": "pisign",
+            "OPTIONS": {"managed_identity_client_id": "test-client"},
+        }, alias="azure-sql-test")
+        with (
+            patch.object(DatabaseWrapper, "sql_server_version", 2022),
+            patch.object(wrapper, "cursor", side_effect=AssertionError("Unexpected live database access")),
+        ):
+            with wrapper.schema_editor(collect_sql=True, atomic=False) as editor:
+                editor.create_model(Device)
+        sql = " ".join(editor.collected_sql)
+        self.assertIn("[pairing_code] IS NOT NULL", sql)
+
+    def test_each_new_connection_gets_a_fresh_token(self):
+        from pisign.azuresql.base import DatabaseWrapper
+
+        wrapper = DatabaseWrapper({
+            "ENGINE": "pisign.azuresql",
+            "NAME": "pisign",
+            "HOST": "existing.database.windows.net",
+            "OPTIONS": {"managed_identity_client_id": "test-client"},
+        }, alias="azure-sql-test")
+        params = wrapper.get_connection_params()
+        with (
+            patch("pisign.azuresql.base.ManagedIdentityCredential") as credential,
+            patch("mssql.base.DatabaseWrapper.get_new_connection") as connect,
+        ):
+            get_token = credential.return_value.__enter__.return_value.get_token
+            get_token.return_value.token = "first-token"
+            wrapper.get_new_connection(params)
+            self.assertEqual(connect.call_args.args[0]["TOKEN"], "first-token")
+            get_token.return_value.token = "second-token"
+            wrapper.get_new_connection(params)
+            self.assertEqual(connect.call_args.args[0]["TOKEN"], "second-token")
+            self.assertEqual(get_token.call_count, 2)
+            get_token.assert_called_with("https://database.windows.net/.default")
+            credential.assert_called_with(client_id="test-client")
+        self.assertNotIn("TOKEN", params)
+
+    def test_credential_failure_does_not_attempt_a_database_connection(self):
+        from azure.core.exceptions import ClientAuthenticationError
+        from pisign.azuresql.base import DatabaseWrapper
+
+        wrapper = DatabaseWrapper({
+            "ENGINE": "pisign.azuresql",
+            "NAME": "pisign",
+            "OPTIONS": {"managed_identity_client_id": "test-client"},
+        }, alias="azure-sql-test")
+        with (
+            patch("pisign.azuresql.base.ManagedIdentityCredential") as credential,
+            patch("mssql.base.DatabaseWrapper.get_new_connection") as connect,
+        ):
+            credential.return_value.__enter__.return_value.get_token.side_effect = ClientAuthenticationError("private details")
+            with self.assertLogs("pisign.azuresql.base", level="WARNING") as logs:
+                with self.assertRaisesMessage(OperationalError, "Azure SQL managed identity authentication failed"):
+                    wrapper.get_new_connection(wrapper.get_connection_params())
+            self.assertNotIn("private details", " ".join(logs.output))
+            connect.assert_not_called()
 
 
 @override_settings(AZURE_CONTAINER_APPS=True)

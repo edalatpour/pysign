@@ -1,0 +1,24 @@
+# yaml-language-server: $schema=https://aka.ms/azure.yaml.json
+name: pisign
+requiredVersions:
+  azd: ">= 1.37.2"
+infra:
+  provider: bicep
+  path: deploy
+  module: main
+# The deployment hook owns the runtime rollout so migrations always finish first.
+services: {}
+hooks:
+  preprovision:
+    shell: pwsh
+    run: .\deploy\azd.ps1 -Phase provision
+    interactive: true
+  predeploy:
+    shell: pwsh
+    run: .\deploy\azd.ps1 -Phase deploy
+    interactive: true
+workflows:
+  up:
+    steps:
+      - azd: provision
+      - azd: deploy --all

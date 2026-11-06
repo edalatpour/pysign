@@ -4,6 +4,7 @@ __pycache__/
 *.sqlite3-*
 .venv/
 .env
+.azure/
 *.egg-info/
 build/
 dist/

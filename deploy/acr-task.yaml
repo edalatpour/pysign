@@ -1,0 +1,19 @@
+version: v1.1.0
+volumes:
+  - name: pip-config
+    secret:
+      pip.conf: "{{.Values.pip_config | b64enc}}"
+steps:
+  - build: >-
+      --platform linux/amd64
+      --secret id=pip_config,src=/run/pip-config/pip.conf
+      -t {{.Run.Registry}}/{{.Values.image}}
+      -f Dockerfile .
+    env:
+      - DOCKER_BUILDKIT=1
+    volumeMounts:
+      - name: pip-config
+        mountPath: /run/pip-config
+    timeout: 1800
+  - push:
+      - "{{.Run.Registry}}/{{.Values.image}}"

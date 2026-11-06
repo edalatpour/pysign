@@ -19,6 +19,11 @@ server = [
 ]
 player = ["websocket-client>=1.8,<2"]
 production = ["gunicorn>=23,<24", "psycopg[binary]>=3.2,<4"]
+azure-sql = [
+    "mssql-django>=1.8,<2",
+    "pyodbc>=5.2,<6",
+    "azure-identity>=1.25,<2",
+]
 
 [project.scripts]
 pisign-player = "player.__main__:main"

@@ -253,7 +253,12 @@ Hardware boot, HDMI behavior, and performance must be checked on the actual Pi.
 
 See [the Azure deployment guide](deploy/README.md) for a non-root container image,
 Bicep provisioning, private Azure PostgreSQL, Key Vault secrets, health probes,
-and separate migration/cleanup jobs. Local development continues to use SQLite.
+and separate migration/cleanup jobs. Use `azd up` for the automated Central US
+deployment or follow the manual Azure CLI steps. Local development continues to use SQLite.
+The guide also supports an existing, shared Azure SQL database, using a private
+`pisign` schema and a schema-restricted managed identity rather than the server's
+administrator credentials. Its database pricing/settings are left unchanged.
+Initial SQL user/schema setup is required before the first `azd deploy`.
 Cloud sessions, device state, and rate-limit counters live in PostgreSQL so that
 replicas share state; no sticky sessions or shared filesystem are required.
 

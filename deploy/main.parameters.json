@@ -1,0 +1,48 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "environmentName": {
+      "value": "${AZURE_ENV_NAME}"
+    },
+    "location": {
+      "value": "${AZURE_LOCATION}"
+    },
+    "resourceGroupName": {
+      "value": "${AZURE_RESOURCE_GROUP}"
+    },
+    "databaseEngine": {
+      "value": "${PISIGN_DATABASE_ENGINE=postgresql}"
+    },
+    "sqlServerName": {
+      "value": "${PISIGN_SQL_SERVER_NAME}"
+    },
+    "sqlServerResourceGroup": {
+      "value": "${PISIGN_SQL_SERVER_RESOURCE_GROUP}"
+    },
+    "sqlDatabaseName": {
+      "value": "${PISIGN_SQL_NAME}"
+    },
+    "existingEnvironmentName": {
+      "value": "${PISIGN_EXISTING_ENVIRONMENT_NAME}"
+    },
+    "existingEnvironmentResourceGroup": {
+      "value": "${PISIGN_EXISTING_ENVIRONMENT_RESOURCE_GROUP}"
+    },
+    "existingRegistryName": {
+      "value": "${PISIGN_EXISTING_REGISTRY_NAME}"
+    },
+    "existingRegistryResourceGroup": {
+      "value": "${PISIGN_EXISTING_REGISTRY_RESOURCE_GROUP}"
+    },
+    "postgresAdminPassword": {
+      "value": "${PISIGN_POSTGRES_PASSWORD}"
+    },
+    "djangoSecretKey": {
+      "value": "${PISIGN_SECRET_KEY}"
+    },
+    "entraClientSecret": {
+      "value": "${PISIGN_ENTRA_CLIENT_SECRET}"
+    }
+  }
+}

@@ -100,8 +100,39 @@ elif DATABASE_ENGINE == "postgresql":
     }}
     if os.environ.get("PISIGN_POSTGRES_SSLROOTCERT"):
         DATABASES["default"]["OPTIONS"]["sslrootcert"] = os.environ["PISIGN_POSTGRES_SSLROOTCERT"]
+elif DATABASE_ENGINE == "mssql":
+    database_values = {}
+    for key in ("NAME", "HOST", "CLIENT_ID"):
+        value = os.environ.get(f"PISIGN_SQL_{key}", "")
+        if not value:
+            raise ImproperlyConfigured(f"Set PISIGN_SQL_{key} when using Azure SQL.")
+        database_values[key] = value
+    try:
+        sql_query_timeout = int(os.environ.get("PISIGN_SQL_QUERY_TIMEOUT", "5"))
+    except ValueError:
+        raise ImproperlyConfigured("PISIGN_SQL_QUERY_TIMEOUT must be a positive integer in seconds.") from None
+    if sql_query_timeout < 1:
+        raise ImproperlyConfigured("PISIGN_SQL_QUERY_TIMEOUT must be a positive integer in seconds.")
+    DATABASES = {"default": {
+        "ENGINE": "pisign.azuresql",
+        "NAME": database_values["NAME"],
+        "HOST": database_values["HOST"],
+        "PORT": "1433",
+        "CONN_MAX_AGE": 0,
+        "CONN_HEALTH_CHECKS": True,
+        "OPTIONS": {
+            "driver": "ODBC Driver 18 for SQL Server",
+            "extra_params": "Encrypt=yes;TrustServerCertificate=no",
+            "connection_timeout": 5,
+            "query_timeout": sql_query_timeout,
+            "connection_retries": 0,
+            "managed_identity_client_id": database_values["CLIENT_ID"],
+        },
+    }}
+    DATABASE_CONNECTION_POOLING = False
+    SCHEMA_TO_INSPECT = "'pisign'"
 else:
-    raise ImproperlyConfigured("PISIGN_DATABASE_ENGINE must be sqlite or postgresql.")
+    raise ImproperlyConfigured("PISIGN_DATABASE_ENGINE must be sqlite, postgresql, or mssql.")
 ENTRA_TENANT_ID = os.environ.get("PISIGN_ENTRA_TENANT_ID", "")
 ENTRA_SUBDOMAIN = os.environ.get("PISIGN_ENTRA_SUBDOMAIN", "")
 ENTRA_CLIENT_ID = os.environ.get("PISIGN_ENTRA_CLIENT_ID", "")

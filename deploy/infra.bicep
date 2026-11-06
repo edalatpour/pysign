@@ -6,9 +6,18 @@ targetScope = 'resourceGroup'
 param prefix string = 'pisign'
 param location string = resourceGroup().location
 
+@allowed(['postgresql', 'mssql'])
+param databaseEngine string = 'postgresql'
+param sqlServerName string = ''
+param sqlServerResourceGroup string = ''
+param sqlDatabaseName string = ''
+param existingEnvironmentName string = ''
+param existingEnvironmentResourceGroup string = ''
+param existingRegistryName string = ''
+param existingRegistryResourceGroup string = ''
+
 @secure()
-@minLength(16)
-param postgresAdminPassword string
+param postgresAdminPassword string = ''
 
 @secure()
 @minLength(50)
@@ -23,8 +32,9 @@ var suffix = uniqueString(resourceGroup().id, prefix)
 var registryName = '${replace(prefix, '-', '')}${suffix}'
 var vaultName = '${prefix}-${suffix}'
 var postgresName = '${prefix}-${suffix}-pg'
+var reuseEnvironment = !empty(existingEnvironmentName)
 
-resource network 'Microsoft.Network/virtualNetworks@2024-05-01' = {
+resource network 'Microsoft.Network/virtualNetworks@2024-05-01' = if (!reuseEnvironment) {
   name: '${prefix}-vnet'
   location: location
   properties: {
@@ -44,7 +54,7 @@ resource network 'Microsoft.Network/virtualNetworks@2024-05-01' = {
           ]
         }
       }
-      {
+      databaseEngine == 'postgresql' ? {
         name: 'postgresql'
         properties: {
           addressPrefix: '10.42.2.0/24'
@@ -55,27 +65,33 @@ resource network 'Microsoft.Network/virtualNetworks@2024-05-01' = {
             }
           ]
         }
+      } : {
+        name: 'sql-private-endpoint'
+        properties: {
+          addressPrefix: '10.42.2.0/24'
+          privateEndpointNetworkPolicies: 'Disabled'
+        }
       }
     ]
   }
 }
 
-resource postgresDns 'Microsoft.Network/privateDnsZones@2024-06-01' = {
+resource postgresDns 'Microsoft.Network/privateDnsZones@2024-06-01' = if (!reuseEnvironment && databaseEngine == 'postgresql') {
   name: '${prefix}.postgres.database.azure.com'
   location: 'global'
 }
 
-resource postgresDnsLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2024-06-01' = {
+resource postgresDnsLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2024-06-01' = if (!reuseEnvironment && databaseEngine == 'postgresql') {
   parent: postgresDns
   name: '${prefix}-link'
   location: 'global'
   properties: {
     registrationEnabled: false
-    virtualNetwork: { id: network.id }
+    virtualNetwork: { id: network!.id }
   }
 }
 
-resource postgres 'Microsoft.DBforPostgreSQL/flexibleServers@2024-08-01' = {
+resource postgres 'Microsoft.DBforPostgreSQL/flexibleServers@2024-08-01' = if (!reuseEnvironment && databaseEngine == 'postgresql') {
   name: postgresName
   location: location
   sku: {
@@ -93,15 +109,15 @@ resource postgres 'Microsoft.DBforPostgreSQL/flexibleServers@2024-08-01' = {
     }
     highAvailability: { mode: 'Disabled' }
     network: {
-      delegatedSubnetResourceId: network.properties.subnets[1].id
-      privateDnsZoneArmResourceId: postgresDns.id
+      delegatedSubnetResourceId: network!.properties.subnets[1].id
+      privateDnsZoneArmResourceId: postgresDns!.id
       publicNetworkAccess: 'Disabled'
     }
   }
   dependsOn: [postgresDnsLink]
 }
 
-resource database 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2024-08-01' = {
+resource database 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2024-08-01' = if (!reuseEnvironment && databaseEngine == 'postgresql') {
   parent: postgres
   name: 'pisign'
   properties: {
@@ -110,7 +126,57 @@ resource database 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2024-08-0
   }
 }
 
-resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
+resource sqlServer 'Microsoft.Sql/servers@2023-08-01' existing = if (databaseEngine == 'mssql') {
+  scope: resourceGroup(sqlServerResourceGroup)
+  name: sqlServerName
+}
+
+resource sqlDns 'Microsoft.Network/privateDnsZones@2024-06-01' = if (!reuseEnvironment && databaseEngine == 'mssql') {
+  name: 'privatelink.${az.environment().suffixes.sqlServerHostname}'
+  location: 'global'
+}
+
+resource sqlDnsLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2024-06-01' = if (!reuseEnvironment && databaseEngine == 'mssql') {
+  parent: sqlDns
+  name: '${prefix}-sql-link'
+  location: 'global'
+  properties: {
+    registrationEnabled: false
+    virtualNetwork: { id: network!.id }
+  }
+}
+
+resource sqlEndpoint 'Microsoft.Network/privateEndpoints@2024-05-01' = if (!reuseEnvironment && databaseEngine == 'mssql') {
+  name: '${prefix}-sql-endpoint'
+  location: location
+  properties: {
+    subnet: { id: '${network!.id}/subnets/sql-private-endpoint' }
+    privateLinkServiceConnections: [
+      {
+        name: '${prefix}-sql'
+        properties: {
+          privateLinkServiceId: sqlServer!.id
+          groupIds: ['sqlServer']
+        }
+      }
+    ]
+  }
+}
+
+resource sqlEndpointDns 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2024-05-01' = if (!reuseEnvironment && databaseEngine == 'mssql') {
+  parent: sqlEndpoint
+  name: 'default'
+  properties: {
+    privateDnsZoneConfigs: [
+      {
+        name: 'sql'
+        properties: { privateDnsZoneId: sqlDns!.id }
+      }
+    ]
+  }
+}
+
+resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' = if (!reuseEnvironment) {
   name: '${prefix}-logs'
   location: location
   properties: {
@@ -119,12 +185,12 @@ resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   }
 }
 
-resource environment 'Microsoft.App/managedEnvironments@2025-01-01' = {
+resource environment 'Microsoft.App/managedEnvironments@2025-01-01' = if (!reuseEnvironment) {
   name: '${prefix}-env'
   location: location
   properties: {
     vnetConfiguration: {
-      infrastructureSubnetId: network.properties.subnets[0].id
+      infrastructureSubnetId: network!.properties.subnets[0].id
       internal: false
     }
     workloadProfiles: [
@@ -136,14 +202,19 @@ resource environment 'Microsoft.App/managedEnvironments@2025-01-01' = {
     appLogsConfiguration: {
       destination: 'log-analytics'
       logAnalyticsConfiguration: {
-        customerId: logs.properties.customerId
-        sharedKey: logs.listKeys().primarySharedKey
+        customerId: logs!.properties.customerId
+        sharedKey: logs!.listKeys().primarySharedKey
       }
     }
   }
 }
 
-resource registry 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
+resource sharedEnvironment 'Microsoft.App/managedEnvironments@2025-01-01' existing = if (reuseEnvironment) {
+  scope: resourceGroup(existingEnvironmentResourceGroup)
+  name: existingEnvironmentName
+}
+
+resource registry 'Microsoft.ContainerRegistry/registries@2023-07-01' = if (empty(existingRegistryName)) {
   name: registryName
   location: location
   sku: { name: 'Basic' }
@@ -155,13 +226,12 @@ resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' 
   location: location
 }
 
-resource registryPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(registry.id, identity.id, 'AcrPull')
-  scope: registry
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')
+module registryAccess './registry-access.bicep' = {
+  scope: resourceGroup(empty(existingRegistryName) ? resourceGroup().name : existingRegistryResourceGroup)
+  params: {
+    registryName: empty(existingRegistryName) ? registry!.name : existingRegistryName
+    identityResourceId: identity.id
     principalId: identity.properties.principalId
-    principalType: 'ServicePrincipal'
   }
 }
 
@@ -189,7 +259,7 @@ resource vaultReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   }
 }
 
-resource databasePassword 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+resource databasePassword 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (databaseEngine == 'postgresql') {
   parent: vault
   name: 'postgres-password'
   properties: { value: postgresAdminPassword }
@@ -207,9 +277,16 @@ resource entraSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
   properties: { value: entraClientSecret }
 }
 
-output registryName string = registry.name
-output registryLoginServer string = registry.properties.loginServer
-output environmentName string = environment.name
-output postgresHost string = postgres.properties.fullyQualifiedDomainName
+output registryName string = registryAccess.outputs.registryName
+output registryResourceGroup string = empty(existingRegistryName) ? resourceGroup().name : existingRegistryResourceGroup
+output registryLoginServer string = registryAccess.outputs.registryLoginServer
+output environmentName string = reuseEnvironment ? sharedEnvironment!.name : environment!.name
+output environmentResourceGroup string = reuseEnvironment ? existingEnvironmentResourceGroup : resourceGroup().name
+output workloadProfileName string = reuseEnvironment && empty(sharedEnvironment!.properties.?workloadProfiles) ? '' : 'Consumption'
+output postgresHost string = databaseEngine == 'postgresql' ? postgres!.properties.fullyQualifiedDomainName : ''
 output postgresUser string = postgresAdminLogin
 output vaultName string = vault.name
+output sqlHost string = databaseEngine == 'mssql' ? sqlServer!.properties.fullyQualifiedDomainName : ''
+output sqlDatabaseName string = databaseEngine == 'mssql' ? sqlDatabaseName : ''
+output identityClientId string = identity.properties.clientId
+output identityPrincipalId string = identity.properties.principalId
