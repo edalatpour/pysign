@@ -226,7 +226,11 @@ class PlayerTests(unittest.TestCase):
             browser.close()
             browser.status("<Code>", "Pair & sign in")
         self.assertEqual(navigate.call_count, 2)
-        self.assertIn("&lt;Code&gt;", (self.state / "status.html").read_text())
+        status = (self.state / "status.html").read_text()
+        self.assertIn("&lt;Code&gt;", status)
+        self.assertIn("Pair &amp; sign in", status)
+        self.assertIn('alt="PiSign"', status)
+        self.assertIn("data:image/svg+xml;base64,", status)
 
     def test_browser_start_uses_kiosk_and_keeps_sandbox_enabled(self):
         browser = Browser(self.state, executable="/usr/bin/chromium")

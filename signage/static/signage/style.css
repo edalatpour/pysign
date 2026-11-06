@@ -4,8 +4,8 @@ body { margin: 0; background: #f3f6f3; color: var(--ink); font: 16px/1.6 system-
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 header { min-height: 84px; background: #fff; border-bottom: 1px solid var(--line); padding: 18px 5%; display: flex; align-items: center; justify-content: space-between; gap: 20px; }
-.brand { color: var(--ink); font-size: 27px; font-weight: 800; letter-spacing: -1px; }
-.brand span { display: block; color: var(--muted); font-size: 9px; letter-spacing: 2px; }
+.brand { display: inline-flex; flex-shrink: 0; }
+.brand img { display: block; width: 184px; height: auto; }
 nav, .actions { display: flex; align-items: center; gap: 22px; }
 nav { font-size: 14px; flex-wrap: wrap; }
 nav form, .actions form { margin: 0; }

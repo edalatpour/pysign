@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-labelledby="title"><title id="title">PiSign - white single-color mark</title><g transform="translate(0 0) scale(1.0)"><path xmlns="http://www.w3.org/2000/svg" fill="#ffffff" d="M122 74C91 74 70 55 70 24c31 0 52 19 52 50Zm12 0c0-31 21-50 52-50 0 31-21 50-52 50Z" />
+  <g xmlns="http://www.w3.org/2000/svg" fill="#ffffff">
+    <path fill-rule="evenodd" d="M56 88h144c16 0 28 12 28 28v72c0 16-12 28-28 28H56c-16 0-28-12-28-28v-72c0-16 12-28 28-28Zm0 16c-7 0-12 5-12 12v72c0 7 5 12 12 12h144c7 0 12-5 12-12v-72c0-7-5-12-12-12H56Z" />
+    <rect x="56" y="116" width="48" height="72" rx="8" />
+    <rect x="116" y="116" width="84" height="28" rx="8" />
+    <path fill-rule="evenodd" d="M124 156h68a8 8 0 0 1 8 8v16a8 8 0 0 1-8 8h-68a8 8 0 0 1-8-8v-16a8 8 0 0 1 8-8Zm28 7v18l16-9-16-9Z" />
+    <path d="M120 212h16v16h20a6 6 0 0 1 0 12h-56a6 6 0 0 1 0-12h20v-16Z" />
+  </g>
+</g></svg>

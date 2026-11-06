@@ -1,9 +1,11 @@
+import base64
 import html
 import json
 import os
 import shutil
 import subprocess
 import time
+from importlib.resources import files
 from urllib.request import ProxyHandler, build_opener
 
 from .storage import private_directory
@@ -95,11 +97,20 @@ class Browser:
         content = (heading, message)
         path = self.state_dir / "status.html"
         if content != self.status_content:
+            logo = base64.b64encode(
+                files("pisign").joinpath("static/pisign/brand/logo-dark.svg").read_bytes()
+            ).decode("ascii")
             path.write_text(
-                '<!doctype html><meta charset="utf-8"><title>PiSign</title>'
-                '<style>body{background:#102e2a;color:#fff;font:28px system-ui;'
-                'display:grid;place-content:center;height:95vh;text-align:center}'
-                'h1{font-size:64px}p{max-width:1000px;white-space:pre-line}</style>'
+                '<!doctype html><meta charset="utf-8">'
+                '<meta name="viewport" content="width=device-width,initial-scale=1">'
+                '<title>PiSign</title>'
+                '<style>*{box-sizing:border-box}body{margin:0;padding:5vh 6vw;'
+                'background:#142b32;color:#f4f8f7;font:clamp(18px,2.4vw,28px) system-ui;'
+                'display:grid;place-content:center;min-height:100vh;text-align:center}'
+                '.brand{display:block;width:min(440px,65vw);height:auto;margin:0 auto 4vh}'
+                'h1{font-size:clamp(32px,5vw,64px);overflow-wrap:anywhere;margin:0 0 1rem}'
+                'p{max-width:1000px;white-space:pre-line;overflow-wrap:anywhere;color:#b4c9c7}</style>'
+                f'<img class="brand" src="data:image/svg+xml;base64,{logo}" alt="PiSign">'
                 f"<h1>{html.escape(heading)}</h1><p>{html.escape(message)}</p>",
                 encoding="utf-8",
             )
