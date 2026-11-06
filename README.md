@@ -35,6 +35,15 @@ With the player installed, connect to it using:
 python -m player run --server https://pisign.braveplant-d8d95ba6.centralus.azurecontainerapps.io
 ```
 
+On macOS, with Google Chrome installed in Applications and your player virtual
+environment activated, pass Chrome's executable explicitly:
+
+```sh
+python -m player run \
+  --server https://pisign.braveplant-d8d95ba6.centralus.azurecontainerapps.io \
+  --browser "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+```
+
 The player still requires an explicit `--server`; this URL is documented here,
 not hardcoded as its default.
 
