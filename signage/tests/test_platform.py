@@ -36,6 +36,12 @@ class PlatformTests(TestCase):
         self.assertContains(response, "Scoreboard")
         self.assertNotContains(response, self.other_device.name)
 
+    def test_dashboard_includes_brand_and_app_icons(self):
+        response = self.client.get(reverse("dashboard"))
+        self.assertContains(response, 'aria-label="PiSign home"')
+        for asset in ("logo-light.svg", "app-icon.svg", "app-icon-180.png", "favicon.ico"):
+            self.assertContains(response, f"/static/pisign/brand/{asset}")
+
     def test_unauthenticated_management_requires_login(self):
         self.client.logout()
         self.assertEqual(self.client.get(self.device_url()).status_code, 302)

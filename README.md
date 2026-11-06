@@ -1,10 +1,50 @@
 # PiSign
 
+![PiSign](pisign/static/pisign/brand/logo-light.svg)
+
 A Python digital signage platform with a Django web UI/API and a lightweight
 Chromium player for Raspberry Pi Zero 2 W. Each signed-in consumer owns a private
 collection of displays and ordered URL playlists, with a duration per URL.
 Authentication uses **Microsoft Entra External ID in an external (consumer/customer)
 tenant**, not local passwords, workforce tenants, or Azure AD B2C policies.
+
+## Brand assets
+
+The original PiSign mark combines two leaves with a berry-colored monitor,
+content tiles, and a negative-space play symbol. It references Raspberry Pi's
+berry/leaf association without reproducing the official Raspberry Pi logo.
+It is not an official Raspberry Pi mark or a statement of endorsement; check
+applicable trademark requirements before publication.
+
+All artwork is in [`pisign/static/pisign/brand/`](pisign/static/pisign/brand/).
+See the [identity preview](pisign/static/pisign/brand/brand-preview.png).
+
+| Use | Files |
+| --- | --- |
+| App listings | `app-icon.svg`, opaque square PNGs at 192, 512, and 1024 px |
+| Browser / home screen | `favicon.ico`, `app-icon-32.png`, `app-icon-180.png` |
+| Admin / display branding | `logo-light.svg` for light backgrounds; `logo-dark.svg` for dark backgrounds |
+| Standalone / single-color mark | `mark.svg`, `mark-ink.svg`, `mark-white.svg` |
+| Device boot splash | `splash.svg`, `splash-1920x1080.png`, `splash-3840x2160.png` |
+
+SVG lettering is outlined, so deployment needs no fonts or external resources.
+Use the full-color mark at 32 px or larger and the single-color mark at smaller
+sizes. Keep clear space of at least one leaf-width around the mark; preserve
+its aspect ratio. App icons include safe padding and no pre-rounded corners so
+listing platforms can apply their own masks. Palette: berry `#e43e73`, leaf
+`#29a574`, deep ink `#142b32`, and off-white `#f4f8f7`.
+
+The admin header, browser icons, and the player's local connecting/pairing/status
+pages use these assets. Branding never overlays playlist content. The splash
+images are ready for a device's boot-splash configuration; they are **not**
+automatically installed into Plymouth, firmware, or the desktop. Fit rather
+than stretch or crop the 16:9 splash on other display shapes.
+
+To regenerate exports, use a separate design environment with `cairosvg`,
+`Pillow`, and `fonttools`, then run `python tools/export_brand.py`. The default
+outline source is Liberation Sans Bold at its standard Debian font path;
+use `--font /path/to/LiberationSans-Bold.ttf` elsewhere. These are development
+tools only, not server/player dependencies.
 
 ## What it does
 

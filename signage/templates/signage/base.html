@@ -5,11 +5,16 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}PiSign{% endblock %}</title>
+  <link rel="icon" href="{% static 'pisign/brand/favicon.ico' %}" sizes="any">
+  <link rel="icon" type="image/svg+xml" href="{% static 'pisign/brand/app-icon.svg' %}">
+  <link rel="apple-touch-icon" href="{% static 'pisign/brand/app-icon-180.png' %}">
   <link rel="stylesheet" href="{% static 'signage/style.css' %}">
 </head>
 <body>
   <header>
-    <a class="brand" href="{% url 'dashboard' %}">PiSign <span>DISPLAY NETWORK</span></a>
+    <a class="brand" href="{% url 'dashboard' %}" aria-label="PiSign home">
+      <img src="{% static 'pisign/brand/logo-light.svg' %}" alt="PiSign" width="184" height="60">
+    </a>
     <nav>
       {% if user.is_authenticated %}
         <span>My workspace</span>
