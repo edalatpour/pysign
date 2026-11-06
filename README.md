@@ -23,6 +23,21 @@ Durations are 1 to 86,400 seconds. For a scoreboard/calendar loop, add the score
 at order 1 with duration 5 and the calendar at order 2 with duration 5. Duplicate
 order values are resolved consistently by creation order.
 
+## Hosted test server
+
+The current Azure deployment is available at:
+
+[https://pisign.braveplant-d8d95ba6.centralus.azurecontainerapps.io](https://pisign.braveplant-d8d95ba6.centralus.azurecontainerapps.io)
+
+With the player installed, connect to it using:
+
+```sh
+python -m player run --server https://pisign.braveplant-d8d95ba6.centralus.azurecontainerapps.io
+```
+
+The player still requires an explicit `--server`; this URL is documented here,
+not hardcoded as its default.
+
 ## Server: local setup
 
 Requires Python 3.10+.
