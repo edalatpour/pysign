@@ -36,6 +36,11 @@ class PlatformTests(TestCase):
         self.assertContains(response, "Scoreboard")
         self.assertNotContains(response, self.other_device.name)
 
+    def test_new_url_defaults_to_one_hour(self):
+        response = self.client.get(self.device_url())
+        self.assertEqual(response.context["slide_form"]["duration"].value(), 3600)
+        self.assertEqual(Slide().duration, 3600)
+
     def test_dashboard_includes_brand_and_app_icons(self):
         response = self.client.get(reverse("dashboard"))
         self.assertContains(response, 'aria-label="PiSign home"')

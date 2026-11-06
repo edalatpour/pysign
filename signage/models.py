@@ -42,7 +42,7 @@ class Slide(models.Model):
     title = models.CharField(max_length=100)
     url = models.URLField(max_length=2048, validators=[validate_display_url])
     duration = models.PositiveIntegerField(
-        default=5, validators=[MinValueValidator(1), MaxValueValidator(86400)],
+        default=3600, validators=[MinValueValidator(1), MaxValueValidator(86400)],
     )
     position = models.PositiveIntegerField(default=0)
 

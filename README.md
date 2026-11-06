@@ -60,9 +60,10 @@ tools only, not server/player dependencies.
   after a reboot. Loading uncached remote pages still needs their network.
 - Revoke a device's credential when its owner disconnects it.
 
-Durations are 1 to 86,400 seconds. For a scoreboard/calendar loop, add the scoreboard
-at order 1 with duration 5 and the calendar at order 2 with duration 5. Duplicate
-order values are resolved consistently by creation order.
+New URLs default to 3,600 seconds; existing URL durations are unchanged. Durations
+can be set from 1 to 86,400 seconds. For a scoreboard/calendar loop, add the
+scoreboard at order 1 with duration 5 and the calendar at order 2 with duration 5.
+Duplicate order values are resolved consistently by creation order.
 
 ## Hosted test server
 
