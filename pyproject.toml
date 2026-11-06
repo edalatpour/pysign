@@ -32,5 +32,6 @@ pisign-player = "player.__main__:main"
 include = ["pisign*", "signage*", "player*"]
 
 [tool.setuptools.package-data]
+player = ["watermark.js"]
 signage = ["templates/signage/*.html", "static/signage/*.css"]
 pisign = ["static/pisign/brand/*.svg", "static/pisign/brand/*.png", "static/pisign/brand/*.ico"]

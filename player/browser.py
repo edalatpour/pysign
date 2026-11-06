@@ -7,8 +7,25 @@ import subprocess
 import time
 from importlib.resources import files
 from urllib.request import ProxyHandler, build_opener
+from xml.etree import ElementTree
 
 from .storage import private_directory
+
+
+def watermark_script():
+    def element(node):
+        return {
+            "tag": node.tag.rsplit("}", 1)[-1],
+            "attributes": node.attrib,
+            "text": node.text or "",
+            "children": [element(child) for child in node],
+        }
+
+    logo = ElementTree.fromstring(
+        files("pisign").joinpath("static/pisign/brand/logo-dark.svg").read_text(encoding="utf-8"),
+    )
+    script = files("player").joinpath("watermark.js").read_text(encoding="utf-8")
+    return f"({script})({json.dumps(element(logo))});"
 
 
 class BrowserError(Exception):
@@ -60,38 +77,49 @@ class Browser:
                                 page["webSocketDebuggerUrl"], timeout=3,
                                 suppress_origin=True, http_proxy_host=None,
                             )
+                            self._command("Page.enable", {})
+                            self._command("Page.addScriptToEvaluateOnNewDocument", {
+                                "source": watermark_script(),
+                                "worldName": "PiSign watermark",
+                            })
                             self.current_url = None
                             return
                     except (OSError, ValueError, IndexError):
                         pass
                 time.sleep(0.2)
             raise BrowserError("Timed out connecting to Chromium.")
+        except BrowserError:
+            self.close()
+            raise
         except (OSError, websocket.WebSocketException) as exc:
             self.close()
             raise BrowserError(f"Could not start Chromium: {type(exc).__name__}.") from exc
 
-    def navigate(self, url):
+    def _command(self, method, params):
         import websocket
 
-        if self.process is None or self.process.poll() is not None or self.socket is None:
-            self.start()
         self.counter += 1
         try:
             self.socket.send(json.dumps({
-                "id": self.counter, "method": "Page.navigate", "params": {"url": url},
+                "id": self.counter, "method": method, "params": params,
             }))
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline:
                 response = json.loads(self.socket.recv())
                 if response.get("id") == self.counter:
                     if "error" in response:
-                        raise BrowserError("Chromium rejected navigation.")
-                    self.current_url = url
-                    return
-            raise BrowserError("Chromium navigation timed out.")
+                        raise BrowserError(f"Chromium rejected {method}.")
+                    return response.get("result", {})
+            raise BrowserError(f"Chromium {method} timed out.")
         except (OSError, ValueError, websocket.WebSocketException) as exc:
             self.close()
             raise BrowserError(f"Chromium connection failed: {type(exc).__name__}.") from exc
+
+    def navigate(self, url):
+        if self.process is None or self.process.poll() is not None or self.socket is None:
+            self.start()
+        self._command("Page.navigate", {"url": url})
+        self.current_url = url
 
     def status(self, heading, message):
         content = (heading, message)

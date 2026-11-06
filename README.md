@@ -35,7 +35,8 @@ listing platforms can apply their own masks. Palette: berry `#e43e73`, leaf
 `#29a574`, deep ink `#142b32`, and off-white `#f4f8f7`.
 
 The admin header, browser icons, and the player's local connecting/pairing/status
-pages use these assets. Branding never overlays playlist content. The splash
+pages use these assets. A subtle PiSign watermark also overlays URL content in
+the bottom-right corner. The splash
 images are ready for a device's boot-splash configuration; they are **not**
 automatically installed into Plymouth, firmware, or the desktop. Fit rather
 than stretch or crop the 16:9 splash on other display shapes.
@@ -304,6 +305,26 @@ from the start of navigation, not after a site's load event: slow pages may show
 loading or have less usable screen time. Repeating a single URL reloads it at its
 configured interval. There is no guarantee of seamless transitions for arbitrary
 third-party pages.
+
+URL content displays a click-through PiSign watermark: a 100 px-wide logo on a
+small translucent dark backing, inset 16 px from the bottom-right corner at 65%
+opacity. It does not resize the page or intercept clicks, scrolling, or keyboard
+focus. The watermark is installed in Chromium's isolated script world on each
+navigation (including redirects and reloads), restored if its element is removed,
+and reinstalled after browser restarts. It uses bundled artwork without extra
+network requests, iframes, or disabling the site's Content Security Policy.
+Local connecting, pairing, and status pages retain their existing branding.
+
+The watermark follows ordinary fullscreen containers, but native fullscreen
+video, fullscreen cross-origin frames, browser error pages, and sites using
+their own top-layer overlays may cover it. It is unobtrusive branding, not a
+tamper-proof overlay.
+
+To run the watermark's real-browser tests, set `PISIGN_TEST_BROWSER` to a
+Chromium/Chrome executable and run
+`python -m unittest player.tests.test_browser player.tests.test_watermark`.
+These tests use headless Chromium and a temporary loopback-only content server;
+they do not require pairing, Entra sign-in, or a running PiSign server.
 
 Keep pages lightweight for a Zero 2 W; heavy dashboards/video can exceed its RAM.
 Chromium restarts after a crash. Polling runs in a separate thread, so slow API

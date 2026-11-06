@@ -251,7 +251,12 @@ class PlayerTests(unittest.TestCase):
         opener.open.return_value.__exit__ = Mock(return_value=False)
         with patch("player.browser.subprocess.Popen", side_effect=launch) as popen:
             with patch("player.browser.build_opener", return_value=opener):
-                with patch("websocket.create_connection", return_value=Mock()):
+                socket = Mock()
+                socket.recv.side_effect = [
+                    json.dumps({"id": 1, "result": {}}),
+                    json.dumps({"id": 2, "result": {"identifier": "watermark"}}),
+                ]
+                with patch("websocket.create_connection", return_value=socket):
                     browser.start()
         arguments = popen.call_args.args[0]
         self.assertIn("--kiosk", arguments)
