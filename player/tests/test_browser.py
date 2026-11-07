@@ -21,6 +21,7 @@ class BrowserWatermarkTests(unittest.TestCase):
         process.poll.return_value = None
 
         def launch(*args, **kwargs):
+            self.launch_arguments = args[0]
             (profile / "DevToolsActivePort").write_text("12345\n/devtools/browser/test")
             return process
 
@@ -45,6 +46,12 @@ class BrowserWatermarkTests(unittest.TestCase):
                 with patch("websocket.create_connection", return_value=socket):
                     self.browser.start()
         return socket
+
+    def test_kiosk_skips_low_memory_launcher_dialog_without_disabling_sandbox(self):
+        self.start_browser()
+        self.assertIn("--no-memcheck", self.launch_arguments)
+        self.assertIn("--kiosk", self.launch_arguments)
+        self.assertNotIn("--no-sandbox", self.launch_arguments)
 
     def test_watermark_is_registered_before_navigation_in_isolated_world(self):
         socket = self.start_browser()

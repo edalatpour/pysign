@@ -251,6 +251,12 @@ auto-login. Raspberry Pi OS Lite alone cannot display a browser; install/configu
 a graphical session first. A 32-bit desktop OS is a practical choice for the
 Zero 2 W's 512 MB RAM. The player runs as the ordinary desktop user, **not root**.
 
+The player passes `--no-memcheck` to skip Raspberry Pi OS Chromium's interactive
+low-memory warning, which otherwise blocks unattended startup on a Zero 2 W.
+This only suppresses the launcher dialog; it does not reduce Chromium's memory
+requirements or disable its sandbox. If the warning appears with an older player,
+stop the player, pull the latest code, and restart it.
+
 On the Pi, obtain this repository, then:
 
 ```sh

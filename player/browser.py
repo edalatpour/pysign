@@ -61,7 +61,7 @@ class Browser:
         self.log = (self.state_dir / "chromium.log").open("a", encoding="utf-8")
         try:
             self.process = subprocess.Popen([
-                self.executable, "--kiosk", "--no-first-run", "--no-default-browser-check",
+                self.executable, "--no-memcheck", "--kiosk", "--no-first-run", "--no-default-browser-check",
                 "--disable-session-crashed-bubble", "--disable-extensions",
                 "--autoplay-policy=no-user-gesture-required",
                 "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0",
