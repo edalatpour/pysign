@@ -157,6 +157,30 @@ class BrowserWatermarkTests(unittest.TestCase):
             with self.assertRaisesRegex(BrowserError, "render the watermark QR"):
                 self.browser.update_watermark()
 
+    def test_browser_failure_logs_traceback_and_preserves_retry_cleanup(self):
+        worker = Mock()
+        config = {"state": "paired", "slides": [
+            {"url": "https://example.com", "duration": 30},
+        ]}
+        worker.updates.get_nowait.return_value = ("config", config)
+        browser = Mock()
+        error = BrowserError("Chromium Page.navigate timed out.")
+        browser.navigate.side_effect = error
+        with patch("player.runtime.cached_config", return_value=config):
+            with patch("player.runtime.time.sleep", side_effect=[None, KeyboardInterrupt]) as sleep:
+                with self.assertLogs("player.runtime", level="ERROR") as logs:
+                    with self.assertRaises(KeyboardInterrupt):
+                        run_player(browser, worker, self.browser.state_dir, "https://pisign.example.com")
+        self.assertEqual(len(logs.records), 1)
+        self.assertIsNotNone(logs.records[0].exc_info)
+        self.assertIs(logs.records[0].exc_info[1], error)
+        self.assertIn("Restarting Chromium in five seconds.", logs.records[0].getMessage())
+        self.assertIn("Traceback (most recent call last):", logs.output[0])
+        self.assertEqual(sleep.call_args_list[0].args, (5,))
+        self.assertEqual(browser.close.call_count, 2)
+        worker.stopping.set.assert_called_once_with()
+        worker.join.assert_called_once_with(timeout=12)
+
     def test_running_player_refreshes_qr_between_slide_rotations(self):
         worker = Mock()
         config = {"state": "paired", "slides": [

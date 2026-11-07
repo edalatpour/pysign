@@ -81,7 +81,7 @@ def run_player(browser, worker, state_dir, server):
                     browser.start()
                     rotation.deadline = 0
             except BrowserError as exc:
-                logger.error("%s Restarting Chromium in five seconds.", exc)
+                logger.exception("%s Restarting Chromium in five seconds.", exc)
                 browser.close()
                 rotation.deadline = 0
                 time.sleep(5)

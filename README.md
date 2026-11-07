@@ -306,6 +306,8 @@ saved identity is bound to the server origin; it is never sent through redirects
 or to the displayed pages. Chromium uses a separate persistent profile in that
 directory, so a locally authenticated site can retain its session. Logs:
 `chromium.log`, plus `player.log` when launched through labwc.
+Browser failures include a traceback in the player log output to identify the
+failing operation; Chromium still restarts after a five-second delay.
 
 After disconnection, the screen shows a revoked-credential message rather than
 silently re-enrolling. To transfer or re-pair a physical device, stop its player,
