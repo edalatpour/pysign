@@ -1,13 +1,18 @@
 import json
 import tempfile
 import unittest
+import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import Mock, patch
 from urllib.error import HTTPError, URLError
 
 from player.__main__ import install_autostart, main, parser
-from player.browser import Browser
-from player.client import API, APIError, ConfigWorker, CredentialRevoked, NoRedirects, server_url, validate_config
+from player.browser import Browser, BrowserError
+from player.client import (
+    API, APIError, ConfigWorker, CredentialRevoked, NoRedirects, RestartRequested,
+    server_url, validate_config, validate_restart,
+)
 from player.runtime import Rotation, cached_config, run_player
 from player.storage import private_directory, read_json, write_json
 
@@ -135,6 +140,207 @@ class PlayerTests(unittest.TestCase):
         worker.run()
         self.assertEqual(worker.updates.get_nowait(), ("config", playlist()))
         self.assertEqual(cached_config(self.state, self.server), playlist())
+
+    def restart_command(self):
+        return {
+            "id": str(uuid.uuid4()),
+            "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat(),
+        }
+
+    def poll_once(self, worker):
+        worker.stopping.clear()
+        worker.stopping.wait = Mock(side_effect=lambda _: worker.stopping.set())
+        worker.run()
+        return worker.updates.get_nowait()
+
+    def test_restart_is_delivered_but_not_cached(self):
+        command = self.restart_command()
+        write_json(self.state / "credentials.json", {"server": self.server, "token": "a" * 43})
+        worker = ConfigWorker(self.server, self.state, "Pi")
+        worker.api = Mock()
+        worker.api.call.return_value = {**playlist(), "restart": command}
+        self.assertEqual(self.poll_once(worker), ("config", {**playlist(), "restart": command}))
+        self.assertEqual(cached_config(self.state, self.server), playlist())
+        self.assertFalse((self.state / "restart.json").exists())
+        worker.api.call.assert_called_once_with("/api/device/config/", token="a" * 43)
+
+    def test_invalid_restart_is_reported_as_fatal(self):
+        write_json(self.state / "credentials.json", {"server": self.server, "token": "a" * 43})
+        for command in [
+            None, {}, {"id": "not-a-uuid", "expires_at": "bad"},
+            {"id": str(uuid.uuid4()), "expires_at": "2026-01-01T00:00:00"},
+            {"id": str(uuid.uuid4()), "expires_at": 123},
+        ]:
+            with self.subTest(command=command):
+                with self.assertRaises(ValueError):
+                    validate_restart(command)
+                worker = ConfigWorker(self.server, self.state, "Pi")
+                worker.api = Mock()
+                worker.api.call.return_value = {**playlist(), "restart": command}
+                self.assertEqual(self.poll_once(worker)[0], "fatal")
+                self.assertFalse((self.state / "restart.json").exists())
+
+    def test_expired_restart_is_not_executed(self):
+        command = self.restart_command()
+        command["expires_at"] = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+        worker = ConfigWorker(self.server, self.state, "Pi")
+        write_json(self.state / "credentials.json", {"server": self.server, "token": "a" * 43})
+        worker.api = Mock()
+        worker.api.call.return_value = {**playlist(), "restart": command}
+        self.assertEqual(self.poll_once(worker), ("config", playlist()))
+
+    def test_receipt_deduplicates_restart_and_waits_for_browser_before_acknowledging(self):
+        command = self.restart_command()
+        write_json(self.state / "credentials.json", {"server": self.server, "token": "a" * 43})
+        write_json(self.state / "restart.json", {
+            "server": self.server, "id": command["id"], "acknowledged": False,
+        })
+        worker = ConfigWorker(self.server, self.state, "Pi")
+        worker.api = Mock()
+        worker.api.call.return_value = {**playlist(), "restart": command}
+        self.assertEqual(self.poll_once(worker), ("config", playlist()))
+        worker.api.call.assert_called_once_with("/api/device/config/", token="a" * 43)
+        worker.ready.set()
+        worker.api.call.side_effect = [
+            {**playlist(), "restart": command}, {"status": "completed"},
+        ]
+        self.assertEqual(self.poll_once(worker), ("config", playlist()))
+        self.assertEqual(worker.api.call.call_args_list[-1].args, (
+            f"/api/device/restarts/{command['id']}/completed/",
+        ))
+        self.assertTrue(read_json(self.state / "restart.json")["acknowledged"])
+        restarted = ConfigWorker(self.server, self.state, "Pi")
+        restarted.api = Mock()
+        restarted.api.call.return_value = {**playlist(), "restart": command}
+        restarted.ready.set()
+        self.assertEqual(self.poll_once(restarted), ("config", playlist()))
+        self.assertEqual(restarted.api.call.call_count, 1)
+
+    def test_acknowledgement_outage_retries_without_restart_loop_or_stalling_playlist(self):
+        command = self.restart_command()
+        write_json(self.state / "credentials.json", {"server": self.server, "token": "a" * 43})
+        write_json(self.state / "restart.json", {
+            "server": self.server, "id": command["id"], "acknowledged": False,
+        })
+        worker = ConfigWorker(self.server, self.state, "Pi")
+        worker.ready.set()
+        worker.api = Mock()
+        worker.api.call.side_effect = [
+            {**playlist(), "restart": command}, APIError("Offline"),
+            {**playlist(), "restart": command}, {"status": "expired"},
+        ]
+        self.assertEqual(self.poll_once(worker), ("config", playlist()))
+        self.assertFalse(read_json(self.state / "restart.json")["acknowledged"])
+        self.assertEqual(self.poll_once(worker), ("config", playlist()))
+        self.assertTrue(read_json(self.state / "restart.json")["acknowledged"])
+
+    def test_restart_receipt_is_server_bound_and_validated(self):
+        for receipt in [
+            [], {"server": "https://other.example.com", "id": str(uuid.uuid4()), "acknowledged": False},
+            {"server": self.server, "id": "bad", "acknowledged": False},
+            {"server": self.server, "id": str(uuid.uuid4()), "acknowledged": "false"},
+        ]:
+            with self.subTest(receipt=receipt):
+                write_json(self.state / "restart.json", receipt)
+                with self.assertRaises(ValueError):
+                    ConfigWorker(self.server, self.state, "Pi")
+
+    def test_runtime_persists_receipt_and_closes_worker_browser_before_restart(self):
+        command = self.restart_command()
+        worker = Mock()
+        worker.is_alive.return_value = False
+        worker.updates.get_nowait.return_value = ("config", {**playlist(), "restart": command})
+        browser = Mock()
+        browser.close.side_effect = lambda: self.assertFalse((self.state / "restart.json").exists())
+        with self.assertRaises(RestartRequested):
+            run_player(browser, worker, self.state, self.server)
+        self.assertEqual(read_json(self.state / "restart.json"), {
+            "server": self.server, "id": command["id"], "acknowledged": False,
+        })
+        worker.ready.set.assert_not_called()
+        worker.stopping.set.assert_called_once()
+        worker.join.assert_called_once_with(timeout=22)
+        browser.close.assert_called_once()
+        browser.navigate.assert_not_called()
+
+    def test_runtime_reports_readiness_only_after_browser_startup(self):
+        worker = Mock()
+        worker.updates.get_nowait.return_value = ("config", playlist())
+        browser = Mock()
+        browser.process.poll.return_value = None
+        with patch("player.runtime.time.sleep", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                run_player(browser, worker, self.state, self.server)
+        browser.navigate.assert_called_once()
+        worker.ready.set.assert_called_once()
+
+    def test_browser_startup_failure_does_not_report_readiness(self):
+        worker = Mock()
+        worker.updates.get_nowait.return_value = ("config", playlist())
+        browser = Mock()
+        browser.navigate.side_effect = BrowserError("Chromium failed")
+        with patch("player.runtime.time.sleep", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                run_player(browser, worker, self.state, self.server)
+        worker.ready.set.assert_not_called()
+
+    def test_failed_receipt_write_prevents_restart_and_stops_worker_browser(self):
+        worker = Mock()
+        worker.is_alive.return_value = False
+        worker.updates.get_nowait.return_value = ("config", {
+            **playlist(), "restart": self.restart_command(),
+        })
+        browser = Mock()
+        with patch("player.runtime.write_json", side_effect=OSError("Disk full")):
+            with self.assertRaisesRegex(OSError, "Disk full"):
+                run_player(browser, worker, self.state, self.server)
+        worker.stopping.set.assert_called_once()
+        browser.close.assert_called_once()
+        self.assertFalse((self.state / "restart.json").exists())
+
+    def test_worker_shutdown_timeout_aborts_restart_without_receipt(self):
+        worker = Mock()
+        worker.is_alive.return_value = True
+        worker.updates.get_nowait.return_value = ("config", {
+            **playlist(), "restart": self.restart_command(),
+        })
+        browser = Mock()
+        with self.assertRaisesRegex(OSError, "Polling worker did not stop"):
+            run_player(browser, worker, self.state, self.server)
+        worker.stopping.set.assert_called_once()
+        browser.close.assert_called_once()
+        self.assertFalse((self.state / "restart.json").exists())
+
+    def test_main_reexec_preserves_interpreter_options_and_releases_lock(self):
+        arguments = [
+            "run", "--server", self.server, "--state-dir", str(self.state),
+            "--software-rendering", "--browser", "/opt/chromium", "--name", "Lobby",
+        ]
+        original = ["/opt/venv/bin/python", "-u", "-m", "player", *arguments]
+
+        def reexec(executable, argv):
+            import fcntl
+            with (self.state / "player.lock").open("a") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self.assertEqual(executable, original[0])
+            self.assertEqual(argv, original)
+
+        with patch("player.__main__.sys.argv", ["player", *arguments]), \
+                patch("player.__main__.sys.orig_argv", original), \
+                patch("player.__main__.sys.executable", original[0]), \
+                patch("player.__main__.Browser"), \
+                patch("player.__main__.run_player", side_effect=RestartRequested), \
+                patch("player.__main__.os.execv", side_effect=reexec) as execute:
+            main()
+        execute.assert_called_once()
+
+    def test_reset_removes_restart_receipt(self):
+        write_json(self.state / "restart.json", {
+            "server": self.server, "id": str(uuid.uuid4()), "acknowledged": True,
+        })
+        with patch("player.__main__.sys.argv", ["player", "reset", "--yes", "--state-dir", str(self.state)]):
+            main()
+        self.assertFalse((self.state / "restart.json").exists())
 
     def test_outage_preserves_cached_playlist(self):
         write_json(self.state / "playlist.json", {"server": self.server, "config": playlist()})

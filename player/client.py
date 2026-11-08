@@ -2,9 +2,11 @@ import json
 import logging
 import queue
 import threading
+from datetime import datetime, timezone
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
+from uuid import UUID
 
 from .storage import read_json, write_json
 
@@ -17,6 +19,26 @@ class APIError(Exception):
 
 class CredentialRevoked(APIError):
     pass
+
+
+class RestartRequested(Exception):
+    pass
+
+
+def validate_restart(data):
+    if not isinstance(data, dict) or not isinstance(data.get("id"), str):
+        raise ValueError("Invalid player restart request.")
+    request_id = str(UUID(data["id"]))
+    if request_id != data["id"] or not isinstance(data.get("expires_at"), str):
+        raise ValueError("Invalid player restart request.")
+    expires = datetime.fromisoformat(data["expires_at"])
+    if expires.tzinfo is None:
+        raise ValueError("Player restart expiry must include a timezone.")
+    return {"id": request_id, "expires_at": expires.isoformat()}
+
+
+def restart_pending(data):
+    return datetime.fromisoformat(data["expires_at"]) > datetime.now(timezone.utc)
 
 
 class NoRedirects(HTTPRedirectHandler):
@@ -112,7 +134,18 @@ class ConfigWorker(threading.Thread):
         self.interval = interval
         self.updates = queue.Queue(maxsize=1)
         self.stopping = threading.Event()
+        self.ready = threading.Event()
         self.api = API(server)
+        self.restart_receipt = read_json(self.state_dir / "restart.json")
+        if self.restart_receipt is not None:
+            receipt = self.restart_receipt
+            if (
+                not isinstance(receipt, dict) or receipt.get("server") != server
+                or not isinstance(receipt.get("id"), str)
+                or str(UUID(receipt["id"])) != receipt["id"]
+                or type(receipt.get("acknowledged")) is not bool
+            ):
+                raise ValueError("Invalid saved restart receipt. Reset locally before changing servers.")
 
     def publish(self, event):
         try:
@@ -138,11 +171,35 @@ class ConfigWorker(threading.Thread):
             raise ValueError("Saved credentials are invalid. Reset locally first.")
         return token
 
+    def acknowledge_restart(self, token):
+        receipt = self.restart_receipt
+        if receipt is None or receipt["acknowledged"] or not self.ready.is_set():
+            return
+        try:
+            result = self.api.call(
+                f"/api/device/restarts/{receipt['id']}/completed/", token=token, data={},
+            )
+            if result.get("status") not in ("completed", "expired", "obsolete"):
+                raise ValueError("Invalid player restart acknowledgement.")
+            updated = {**receipt, "acknowledged": True}
+            write_json(self.state_dir / "restart.json", updated)
+            self.restart_receipt = updated
+            logger.info("Player restart %s acknowledgement: %s.", receipt["id"], result["status"])
+        except CredentialRevoked:
+            raise
+        except APIError as exc:
+            logger.warning("Cannot acknowledge player restart: %s Retrying in %s seconds.", exc, self.interval)
+
     def run(self):
         while not self.stopping.is_set():
             try:
                 token = self.credentials()
-                config = validate_config(self.api.call("/api/device/config/", token=token))
+                if self.stopping.is_set():
+                    return
+                response = self.api.call("/api/device/config/", token=token)
+                if self.stopping.is_set():
+                    return
+                config = validate_config(response)
                 if config["state"] == "unpaired":
                     pairing = self.api.call("/api/device/pairing/", token=token, data={})
                     code = pairing.get("code")
@@ -151,6 +208,13 @@ class ConfigWorker(threading.Thread):
                     config["code"] = code
                 else:
                     write_json(self.state_dir / "playlist.json", {"server": self.server, "config": config})
+                    self.acknowledge_restart(token)
+                    if "restart" in response:
+                        restart = validate_restart(response["restart"])
+                        if restart_pending(restart) and (
+                            self.restart_receipt is None or self.restart_receipt["id"] != restart["id"]
+                        ):
+                            config["restart"] = restart
                 self.publish(("config", config))
             except CredentialRevoked as exc:
                 (self.state_dir / "playlist.json").unlink(missing_ok=True)

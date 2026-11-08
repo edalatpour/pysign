@@ -12,10 +12,12 @@ urlpatterns = [
     path("devices/claim/", views.claim, name="claim"),
     path("devices/<uuid:device_id>/", views.device_detail, name="device"),
     path("devices/<uuid:device_id>/remove/", views.remove_device, name="remove-device"),
+    path("devices/<uuid:device_id>/restart/", views.restart_player, name="restart-player"),
     path("devices/<uuid:device_id>/slides/add/", views.edit_slide, name="add-slide"),
     path("devices/<uuid:device_id>/slides/<int:slide_id>/", views.edit_slide, name="edit-slide"),
     path("devices/<uuid:device_id>/slides/<int:slide_id>/remove/", views.remove_slide, name="remove-slide"),
     path("api/devices/register/", api.register, name="api-register"),
     path("api/device/config/", api.config, name="api-config"),
+    path("api/device/restarts/<uuid:request_id>/completed/", api.restart_completed, name="api-restart-completed"),
     path("api/device/pairing/", api.pairing, name="api-pairing"),
 ]

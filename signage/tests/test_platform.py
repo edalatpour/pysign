@@ -1,4 +1,5 @@
 import json
+import uuid
 from datetime import timedelta
 from unittest.mock import patch
 
@@ -7,7 +8,7 @@ from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
-from signage.models import Device, RateLimit, Slide
+from signage.models import Device, PlayerRestart, RateLimit, Slide
 from signage.security import digest_token
 
 
@@ -58,6 +59,7 @@ class PlatformTests(TestCase):
         paths = [
             ("device", {}),
             ("remove-device", {}),
+            ("restart-player", {}),
             ("add-slide", {}),
             ("edit-slide", {"slide_id": foreign_slide.pk}),
             ("remove-slide", {"slide_id": foreign_slide.pk}),
@@ -140,7 +142,10 @@ class PlatformTests(TestCase):
     def test_mutations_require_csrf_and_post(self):
         csrf_client = Client(enforce_csrf_checks=True)
         csrf_client.force_login(self.owner)
-        for name, kwargs in [("remove-device", {}), ("remove-slide", {"slide_id": self.slide.pk})]:
+        for name, kwargs in [
+            ("remove-device", {}), ("restart-player", {}),
+            ("remove-slide", {"slide_id": self.slide.pk}),
+        ]:
             url = self.device_url(name, **kwargs)
             self.assertEqual(csrf_client.post(url).status_code, 403)
             self.assertEqual(csrf_client.get(url).status_code, 405)
@@ -152,6 +157,113 @@ class PlatformTests(TestCase):
             reverse("api-config"), HTTP_AUTHORIZATION=f"Bearer {self.token}",
         ).status_code, 401)
         self.assertFalse(Slide.objects.filter(pk=self.slide.pk).exists())
+
+    def test_restart_requires_user_session_not_device_token(self):
+        client = Client()
+        self.assertEqual(client.post(
+            self.device_url("restart-player"), HTTP_AUTHORIZATION=f"Bearer {self.token}",
+        ).status_code, 302)
+        self.assertFalse(PlayerRestart.objects.exists())
+
+    def queue_restart(self):
+        self.assertEqual(self.client.post(self.device_url("restart-player")).status_code, 302)
+        return PlayerRestart.objects.get(device=self.device)
+
+    def complete_restart(self, request_id, token=None):
+        return self.client.post(
+            reverse("api-restart-completed", kwargs={"request_id": request_id}),
+            HTTP_AUTHORIZATION=f"Bearer {token or self.token}",
+        )
+
+    def test_restart_is_expiring_deduplicated_and_visible(self):
+        now = timezone.now()
+        with patch("signage.views.timezone.now", return_value=now):
+            restart = self.queue_restart()
+            self.queue_restart()
+        self.assertEqual(PlayerRestart.objects.count(), 1)
+        self.assertEqual(restart.requested_by, self.owner)
+        self.assertEqual(restart.requested_at, now)
+        self.assertEqual(restart.expires_at, now + timedelta(minutes=10))
+        self.assertEqual(restart.status, "pending")
+        restart.refresh_from_db()
+        original_id = restart.request_id
+        response = self.client.get(reverse("api-config"), HTTP_AUTHORIZATION=f"Bearer {self.token}")
+        self.assertEqual(response.json()["restart"], {
+            "id": str(original_id), "expires_at": restart.expires_at.isoformat(),
+        })
+        self.assertEqual(response["Cache-Control"], "no-store")
+        self.assertContains(self.client.get(self.device_url()), "Restart pending")
+        self.queue_restart()
+        restart.refresh_from_db()
+        self.assertEqual(restart.request_id, original_id)
+        self.assertEqual(restart.expires_at, now + timedelta(minutes=10))
+
+    def test_restart_acknowledgement_is_idempotent_and_preserves_device(self):
+        restart = self.queue_restart()
+        response = self.complete_restart(restart.request_id)
+        self.assertEqual(response.json(), {"status": "completed"})
+        self.assertEqual(response["Cache-Control"], "no-store")
+        restart.refresh_from_db()
+        completed_at = restart.completed_at
+        self.assertIsNotNone(completed_at)
+        self.assertEqual(self.complete_restart(restart.request_id).json(), {"status": "completed"})
+        restart.refresh_from_db()
+        self.assertEqual(restart.completed_at, completed_at)
+        self.assertEqual(restart.status, "completed")
+        config = self.client.get(reverse("api-config"), HTTP_AUTHORIZATION=f"Bearer {self.token}").json()
+        self.assertNotIn("restart", config)
+        self.device.refresh_from_db()
+        self.assertEqual(self.device.owner, self.owner)
+        self.assertEqual(self.device.token_digest, digest_token(self.token))
+        self.assertEqual(self.device.slides.count(), 1)
+        self.assertContains(self.client.get(self.device_url()), "Player restarted and reconnected")
+        new_restart = self.queue_restart()
+        self.assertNotEqual(new_restart.request_id, restart.request_id)
+        self.assertIsNone(new_restart.completed_at)
+
+    def test_expired_restart_is_not_delivered_and_can_be_replaced(self):
+        restart = self.queue_restart()
+        PlayerRestart.objects.filter(device=self.device).update(expires_at=timezone.now() - timedelta(seconds=1))
+        restart.refresh_from_db()
+        self.assertEqual(restart.status, "expired")
+        self.assertNotIn("restart", self.client.get(
+            reverse("api-config"), HTTP_AUTHORIZATION=f"Bearer {self.token}",
+        ).json())
+        self.assertEqual(self.complete_restart(restart.request_id).json(), {"status": "expired"})
+        self.assertContains(self.client.get(self.device_url()), "expired without confirmation")
+        replacement = self.queue_restart()
+        self.assertNotEqual(replacement.request_id, restart.request_id)
+        self.assertEqual(self.complete_restart(restart.request_id).json(), {"status": "obsolete"})
+        replacement.refresh_from_db()
+        self.assertIsNone(replacement.completed_at)
+
+    def test_completion_requires_correct_device_credential_and_post(self):
+        restart = self.queue_restart()
+        url = reverse("api-restart-completed", kwargs={"request_id": restart.request_id})
+        self.assertEqual(self.client.post(url).status_code, 401)
+        self.assertEqual(self.client.get(url, HTTP_AUTHORIZATION=f"Bearer {self.token}").status_code, 405)
+        self.assertEqual(self.complete_restart(restart.request_id, token="b" * 43).json(), {"status": "obsolete"})
+        self.assertEqual(self.complete_restart(uuid.uuid4()).json(), {"status": "obsolete"})
+        restart.refresh_from_db()
+        self.assertIsNone(restart.completed_at)
+        self.assertEqual(self.complete_restart(restart.request_id, token="c" * 43).status_code, 401)
+
+    def test_disconnect_deletes_restart_and_prevents_completion(self):
+        restart = self.queue_restart()
+        self.client.post(self.device_url("remove-device"))
+        self.assertFalse(PlayerRestart.objects.exists())
+        self.assertEqual(self.complete_restart(restart.request_id).status_code, 401)
+
+    def test_unpaired_device_cannot_receive_or_complete_restart(self):
+        restart = self.queue_restart()
+        self.device.owner = None
+        self.device.save()
+        self.assertEqual(self.client.get(
+            reverse("api-config"), HTTP_AUTHORIZATION=f"Bearer {self.token}",
+        ).json(), {"state": "unpaired", "slides": []})
+        self.assertEqual(self.complete_restart(restart.request_id).json(), {"status": "obsolete"})
+        restart.refresh_from_db()
+        self.assertIsNone(restart.completed_at)
 
     def register_device(self):
         response = self.client.post(

@@ -173,6 +173,14 @@ Pairing, cached playlists, and the Chromium profile are stored in
 `~/.local/state/pisign`. Chromium diagnostics are in `chromium.log` there;
 labwc autostart also writes `player.log`. Rebooting does not erase this state.
 
+Players with remote restart support can be restarted from their display settings
+using **Restart player**. This restarts PiSign and Chromium, not the Pi, and keeps
+pairing, the cached playlist, and browser cookies. Requests expire after ten
+minutes; an offline or older player remains pending until expiry. Refresh the
+settings page to see whether the restarted player has reconnected.
+Existing players need the one-time manual update above to support this action;
+their desktop or X11 launchers do not need changing.
+
 To transfer a display or change servers, stop the player, remove its old display
 entry in the dashboard, then reset it locally and pair again:
 

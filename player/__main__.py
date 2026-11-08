@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 from .browser import Browser, BrowserError
-from .client import ConfigWorker, server_url
+from .client import ConfigWorker, RestartRequested, server_url
 from .runtime import run_player
 from .storage import private_directory
 
@@ -78,6 +78,7 @@ def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     os.umask(0o077)
     args.state_dir = private_directory(args.state_dir)
+    restart = False
     with (args.state_dir / "player.lock").open("a") as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -86,7 +87,7 @@ def main():
         if args.command == "reset":
             if not args.yes:
                 raise SystemExit("Reset discards local credentials and cached URLs. Confirm with --yes.")
-            for name in ("credentials.json", "playlist.json", "status.html"):
+            for name in ("credentials.json", "playlist.json", "status.html", "restart.json"):
                 (args.state_dir / name).unlink(missing_ok=True)
             profile = args.state_dir / "browser-profile"
             if profile.is_symlink():
@@ -105,10 +106,18 @@ def main():
             browser = Browser(args.state_dir, args.browser, software_rendering=args.software_rendering)
             worker = ConfigWorker(server, args.state_dir, args.name)
             run_player(browser, worker, args.state_dir, server)
+        except RestartRequested:
+            restart = True
         except (BrowserError, OSError, ValueError) as exc:
             raise SystemExit(str(exc)) from exc
         except KeyboardInterrupt:
             pass
+    if restart:
+        try:
+            os.execv(sys.executable, [sys.executable, *sys.orig_argv[1:]])
+        except OSError as exc:
+            logging.exception("Could not re-execute the player.")
+            raise SystemExit(f"Player restart failed: {exc}") from exc
 
 
 if __name__ == "__main__":

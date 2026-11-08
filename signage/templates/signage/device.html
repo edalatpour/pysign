@@ -29,6 +29,20 @@
   <aside>
     <section class="card"><h2>Display name</h2><form method="post">{% csrf_token %}{{ form.as_p }}<button>Save name</button></form></section>
     <section class="card">
+      <h2>Restart player</h2>
+      <p class="muted">Restarts PiSign and Chromium, not the Pi. Pairing, playlist, and browser cookies are kept. Requires a player with remote restart support.</p>
+      {% if restart %}
+        {% if restart.status == "pending" %}
+          <p role="status">Restart pending. Expires at {{ restart.expires_at }}. Refresh this page to check for completion.</p>
+        {% elif restart.status == "completed" %}
+          <p role="status">Player restarted and reconnected at {{ restart.completed_at }}.</p>
+        {% else %}
+          <p role="status">Restart request expired without confirmation. The display may be offline or running an older player.</p>
+        {% endif %}
+      {% endif %}
+      <form method="post" action="{% url 'restart-player' device.pk %}">{% csrf_token %}<button{% if restart.status == "pending" %} disabled{% endif %}>Restart player</button></form>
+    </section>
+    <section class="card">
       <h2>Disconnect display</h2>
       <p class="muted">Revokes this player's credential and deletes its playlist. Physical access is required to reset and pair it again.</p>
       <form method="post" action="{% url 'remove-device' device.pk %}">{% csrf_token %}<button class="danger">Disconnect permanently</button></form>
