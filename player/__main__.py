@@ -21,6 +21,8 @@ def parser():
     result.add_argument("--state-dir", type=Path, default=Path.home() / ".local/state/pisign")
     result.add_argument("--name", default=socket.gethostname()[:100])
     result.add_argument("--browser", help="Chromium executable path")
+    result.add_argument("--software-rendering", action="store_true",
+                        help="Use CPU rendering for framebuffer/X11 kiosks (slower)")
     result.add_argument("--allow-http", action="store_true", help="Development only: allow an unencrypted server")
     result.add_argument("--yes", action="store_true", help="Confirm destructive local credential reset")
     return result
@@ -32,6 +34,8 @@ def install_autostart(args, server):
                  "--state-dir", str(args.state_dir.resolve()), "--name", args.name]
     if args.browser:
         arguments += ["--browser", args.browser]
+    if args.software_rendering:
+        arguments += ["--software-rendering"]
     if args.allow_http:
         arguments += ["--allow-http"]
     # Desktop Entry quoting is not shell quoting; escape its reserved characters.
@@ -98,7 +102,7 @@ def main():
             if args.command == "install-autostart":
                 install_autostart(args, server)
                 return
-            browser = Browser(args.state_dir, args.browser)
+            browser = Browser(args.state_dir, args.browser, software_rendering=args.software_rendering)
             worker = ConfigWorker(server, args.state_dir, args.name)
             run_player(browser, worker, args.state_dir, server)
         except (BrowserError, OSError, ValueError) as exc:

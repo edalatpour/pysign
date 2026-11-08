@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from player.browser import Browser, BrowserError
+from player.browser import Browser, BrowserError, BrowserTimeout
 from player.runtime import run_player
 
 
@@ -53,6 +53,22 @@ class BrowserWatermarkTests(unittest.TestCase):
         self.assertIn("--kiosk", self.launch_arguments)
         self.assertNotIn("--no-sandbox", self.launch_arguments)
 
+    def test_software_rendering_is_opt_in(self):
+        self.start_browser()
+        for flag in ["--disable-gpu", "--disable-gpu-compositing", "--disable-gpu-rasterization",
+                     "--ozone-platform=x11"]:
+            self.assertNotIn(flag, self.launch_arguments)
+
+    def test_software_rendering_disables_gpu_rasterization_and_keeps_sandbox(self):
+        self.browser = Browser(self.browser.state_dir, executable="chromium", software_rendering=True)
+        self.addCleanup(self.browser.close)
+        self.start_browser()
+        for flag in ["--disable-gpu", "--disable-gpu-compositing", "--disable-gpu-rasterization",
+                     "--ozone-platform=x11"]:
+            self.assertIn(flag, self.launch_arguments)
+        self.assertNotIn("--no-sandbox", self.launch_arguments)
+        self.assertEqual(self.launch_arguments[-1], "about:blank")
+
     def test_watermark_is_registered_before_navigation_in_isolated_world(self):
         socket = self.start_browser()
         command = json.loads(socket.send.call_args.args[0])
@@ -91,6 +107,61 @@ class BrowserWatermarkTests(unittest.TestCase):
         with self.assertRaisesRegex(BrowserError, "Page.navigate"):
             self.browser.navigate("https://example.com")
         self.assertIsNone(self.browser.current_url)
+
+    def test_command_timeout_keeps_browser_alive_and_ignores_late_reply(self):
+        import websocket
+
+        socket = self.start_browser()
+        socket.gettimeout.return_value = 3
+        process = self.browser.process
+        socket.recv.side_effect = websocket.WebSocketTimeoutException("Connection timed out")
+        with self.assertRaisesRegex(BrowserTimeout, "Page.getFrameTree timed out"):
+            self.browser._command("Page.getFrameTree", {})
+        self.assertIs(self.browser.socket, socket)
+        self.assertIs(self.browser.process, process)
+        socket.close.assert_not_called()
+        process.terminate.assert_not_called()
+        self.assertEqual(socket.settimeout.call_args.args, (3,))
+        socket.recv.side_effect = [
+            json.dumps({"id": 3, "result": {"frameTree": {}}}),
+            json.dumps({"method": "Page.frameNavigated", "params": {}}),
+            json.dumps({"id": 4, "result": {"frameTree": {"frame": {"url": "https://example.com"}}}}),
+        ]
+        self.assertEqual(
+            self.browser._command("Page.getFrameTree", {}),
+            {"frameTree": {"frame": {"url": "https://example.com"}}},
+        )
+
+    def test_command_deadline_raises_timeout_without_closing_browser(self):
+        socket = self.start_browser()
+        with patch("player.browser.time.monotonic", side_effect=[0, 5]):
+            with self.assertRaises(BrowserTimeout):
+                self.browser._command("Page.getFrameTree", {})
+        socket.close.assert_not_called()
+
+    def test_navigation_uses_thirty_second_budget_and_restores_socket_timeout(self):
+        socket = self.start_browser()
+        socket.gettimeout.return_value = 3
+        socket.settimeout.reset_mock()
+        socket.recv.side_effect = [
+            json.dumps({"method": "Page.frameNavigated", "params": {}}),
+            json.dumps({"id": 3, "result": {}}),
+        ]
+        with patch("player.browser.time.monotonic", side_effect=[0, 4, 14]):
+            self.browser.navigate("https://scoreboard.example.com")
+        self.assertEqual([call.args for call in socket.settimeout.call_args_list],
+                         [(30,), (26,), (16,), (3,)])
+        self.assertEqual(self.browser.current_url, "https://scoreboard.example.com")
+
+    def test_connection_failure_still_closes_browser(self):
+        import websocket
+
+        socket = self.start_browser()
+        socket.recv.side_effect = websocket.WebSocketConnectionClosedException("Closed")
+        with self.assertRaisesRegex(BrowserError, "WebSocketConnectionClosedException"):
+            self.browser._command("Page.getFrameTree", {})
+        self.assertIsNone(self.browser.socket)
+        self.assertIsNone(self.browser.process)
 
     def test_status_page_keeps_existing_branding(self):
         with patch.object(self.browser, "navigate") as navigate:
@@ -164,7 +235,7 @@ class BrowserWatermarkTests(unittest.TestCase):
         ]}
         worker.updates.get_nowait.return_value = ("config", config)
         browser = Mock()
-        error = BrowserError("Chromium Page.navigate timed out.")
+        error = BrowserTimeout("Chromium Page.navigate timed out.")
         browser.navigate.side_effect = error
         with patch("player.runtime.cached_config", return_value=config):
             with patch("player.runtime.time.sleep", side_effect=[None, KeyboardInterrupt]) as sleep:
@@ -197,3 +268,29 @@ class BrowserWatermarkTests(unittest.TestCase):
         browser.navigate.assert_called_once_with("https://example.com")
         self.assertEqual(browser.update_watermark.call_count, 2)
         browser.close.assert_called_once()
+
+    def test_watermark_timeout_is_logged_without_restarting_or_stopping_rotation(self):
+        worker = Mock()
+        config = {"state": "paired", "slides": [
+            {"url": "https://example.com", "duration": 1},
+            {"url": "https://scoreboard.example.com", "duration": 1},
+        ]}
+        worker.updates.get_nowait.return_value = ("config", config)
+        browser = Mock()
+        browser.process.poll.return_value = None
+        browser.update_watermark.side_effect = [
+            BrowserTimeout("Chromium Page.getFrameTree timed out."), None,
+        ]
+        with patch("player.runtime.cached_config", return_value=config):
+            with patch("player.runtime.time.monotonic", side_effect=[0, 1]):
+                with patch("player.runtime.time.sleep", side_effect=[None, KeyboardInterrupt]) as sleep:
+                    with self.assertLogs("player.runtime", level="WARNING") as logs:
+                        with self.assertRaises(KeyboardInterrupt):
+                            run_player(browser, worker, self.browser.state_dir, "https://pisign.example.com")
+        self.assertEqual([call.args[0] for call in browser.navigate.call_args_list],
+                         ["https://example.com", "https://scoreboard.example.com"])
+        self.assertEqual(browser.update_watermark.call_count, 2)
+        browser.start.assert_not_called()
+        browser.close.assert_called_once()
+        self.assertTrue(all(call.args == (0.1,) for call in sleep.call_args_list))
+        self.assertIn("Skipping this watermark refresh.", logs.output[0])

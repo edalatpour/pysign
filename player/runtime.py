@@ -2,7 +2,7 @@ import logging
 import queue
 import time
 
-from .browser import BrowserError
+from .browser import BrowserError, BrowserTimeout
 from .client import validate_config
 from .storage import read_json
 
@@ -76,7 +76,10 @@ def run_player(browser, worker, state_dir, server):
                     url = rotation.due(time.monotonic())
                     if url:
                         browser.navigate(url)
-                    browser.update_watermark()
+                    try:
+                        browser.update_watermark()
+                    except BrowserTimeout as exc:
+                        logger.warning("%s Skipping this watermark refresh.", exc)
                 if browser.process is not None and browser.process.poll() is not None:
                     browser.start()
                     rotation.deadline = 0

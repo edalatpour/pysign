@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 from urllib.error import HTTPError, URLError
 
-from player.__main__ import install_autostart, parser
+from player.__main__ import install_autostart, main, parser
 from player.browser import Browser
 from player.client import API, APIError, ConfigWorker, CredentialRevoked, NoRedirects, server_url, validate_config
 from player.runtime import Rotation, cached_config, run_player
@@ -157,7 +157,36 @@ class PlayerTests(unittest.TestCase):
     def test_default_state_directory_and_branding(self):
         args = parser().parse_args(["run"])
         self.assertEqual(args.state_dir, Path.home() / ".local/state/pisign")
+        self.assertFalse(args.software_rendering)
         self.assertIn("PiSign Raspberry Pi Chromium player", parser().format_help())
+
+    def test_run_passes_software_rendering_to_browser(self):
+        arguments = ["pisign-player", "run", "--server", self.server,
+                     "--state-dir", str(self.state), "--software-rendering"]
+        with patch("player.__main__.sys.argv", arguments):
+            with patch("player.__main__.Browser") as browser:
+                with patch("player.__main__.ConfigWorker") as worker:
+                    with patch("player.__main__.run_player") as run:
+                        main()
+        browser.assert_called_once_with(self.state, None, software_rendering=True)
+        run.assert_called_once_with(browser.return_value, worker.return_value, self.state, self.server)
+
+    def test_autostart_preserves_software_rendering_and_custom_browser(self):
+        home = Path(self.temporary.name)
+        args = parser().parse_args([
+            "install-autostart", "--server", self.server, "--state-dir", str(self.state),
+            "--software-rendering", "--browser", "/opt/custom/chromium",
+        ])
+        with patch("player.__main__.Path.home", return_value=home):
+            with patch("player.__main__.shutil.which", return_value="/usr/bin/labwc"):
+                install_autostart(args, self.server)
+        desktop = (home / ".config/autostart/pisign.desktop").read_text()
+        launcher = (self.state / "start-player").read_text()
+        self.assertIn('"--software-rendering"', desktop)
+        self.assertIn('"/opt/custom/chromium"', desktop)
+        self.assertIn("--software-rendering", launcher)
+        self.assertIn("/opt/custom/chromium", launcher)
+        self.assertIn("start-player", (home / ".config/labwc/autostart").read_text())
 
     def test_autostart_preserves_virtualenv_and_labwc_configuration(self):
         home = Path(self.temporary.name)

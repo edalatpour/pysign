@@ -36,9 +36,14 @@ class BrowserError(Exception):
     pass
 
 
+class BrowserTimeout(BrowserError):
+    pass
+
+
 class Browser:
-    def __init__(self, state_dir, executable=None):
+    def __init__(self, state_dir, executable=None, software_rendering=False):
         self.state_dir = state_dir
+        self.software_rendering = software_rendering
         self.executable = executable or shutil.which("chromium") or shutil.which("chromium-browser")
         if not self.executable:
             raise BrowserError("Install Chromium first, or pass --browser /path/to/chromium.")
@@ -60,8 +65,13 @@ class Browser:
         environment = os.environ.copy()
         self.log = (self.state_dir / "chromium.log").open("a", encoding="utf-8")
         try:
+            rendering_arguments = [
+                "--disable-gpu", "--disable-gpu-compositing", "--disable-gpu-rasterization",
+                "--ozone-platform=x11",
+            ] if self.software_rendering else []
             self.process = subprocess.Popen([
-                self.executable, "--no-memcheck", "--kiosk", "--no-first-run", "--no-default-browser-check",
+                self.executable, *rendering_arguments,
+                "--no-memcheck", "--kiosk", "--no-first-run", "--no-default-browser-check",
                 "--disable-session-crashed-bubble", "--disable-extensions",
                 "--autoplay-policy=no-user-gesture-required",
                 "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0",
@@ -101,30 +111,41 @@ class Browser:
             self.close()
             raise BrowserError(f"Could not start Chromium: {type(exc).__name__}.") from exc
 
-    def _command(self, method, params):
+    def _command(self, method, params, timeout=5):
         import websocket
 
         self.counter += 1
+        socket = self.socket
+        previous_timeout = socket.gettimeout()
+        deadline = time.monotonic() + timeout
         try:
-            self.socket.send(json.dumps({
+            socket.settimeout(timeout)
+            socket.send(json.dumps({
                 "id": self.counter, "method": method, "params": params,
             }))
-            deadline = time.monotonic() + 5
-            while time.monotonic() < deadline:
-                response = json.loads(self.socket.recv())
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise BrowserTimeout(f"Chromium {method} timed out.")
+                socket.settimeout(remaining)
+                response = json.loads(socket.recv())
                 if response.get("id") == self.counter:
                     if "error" in response:
                         raise BrowserError(f"Chromium rejected {method}.")
                     return response.get("result", {})
-            raise BrowserError(f"Chromium {method} timed out.")
+        except websocket.WebSocketTimeoutException as exc:
+            raise BrowserTimeout(f"Chromium {method} timed out.") from exc
         except (OSError, ValueError, websocket.WebSocketException) as exc:
             self.close()
             raise BrowserError(f"Chromium connection failed: {type(exc).__name__}.") from exc
+        finally:
+            if self.socket is socket:
+                socket.settimeout(previous_timeout)
 
     def navigate(self, url):
         if self.process is None or self.process.poll() is not None or self.socket is None:
             self.start()
-        self._command("Page.navigate", {"url": url})
+        self._command("Page.navigate", {"url": url}, timeout=30)
         self.current_url = url
         self.qr_checked_at = 0
 

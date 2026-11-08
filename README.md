@@ -246,9 +246,9 @@ with SameSite=Lax session cookies.
 
 ## Raspberry Pi player
 
-Use Raspberry Pi OS **with a desktop session**, Chromium, networking, and desktop
-auto-login. Raspberry Pi OS Lite alone cannot display a browser; install/configure
-a graphical session first. A 32-bit desktop OS is a practical choice for the
+Use Raspberry Pi OS with Chromium, networking, and a graphical session: either a
+desktop with desktop auto-login, or the minimal Lite kiosk described below.
+Lite alone cannot display a browser; install/configure X first. A 32-bit OS is a practical choice for the
 Zero 2 W's 512 MB RAM. The player runs as the ordinary desktop user, **not root**.
 
 The player passes `--no-memcheck` to skip Raspberry Pi OS Chromium's interactive
@@ -272,6 +272,12 @@ the player detects either executable. A custom executable can be selected with
 `--browser /path/to/chromium`. The player installation does **not** install Django,
 Entra libraries, Selenium, or a second browser engine.
 
+For an X11 framebuffer kiosk, add `--software-rendering`. This explicitly disables
+GPU compositing and GPU rasterization, including Raspberry Pi Chromium's
+launcher-enabled GPU rasterization, and selects the X11 backend. It does not
+disable the browser sandbox. CPU rendering can be slower on complex pages.
+Leave this option off for a working GPU-accelerated desktop/Wayland session.
+
 An unconfigured Pi opens a full-screen pairing page. In the web UI, sign in,
 choose **Pair a display**, and enter its code and a display name. Codes expire
 after 10 minutes and refresh automatically. Add URLs to the paired display;
@@ -283,7 +289,7 @@ For an isolated development LAN only:
 .venv/bin/python -m player run --server http://192.168.1.10:8000 --allow-http
 ```
 
-### Start automatically at boot
+### Desktop: start automatically at boot
 
 Enable **Desktop Autologin** using `sudo raspi-config`. Then, as the same desktop
 user and using the same virtual environment:
@@ -300,6 +306,86 @@ labwc itself, rerun the installer after installing the desktop. Multiple launche
 are prevented by a local process lock. Disable screen blanking using the OS
 display settings so the screen remains on. Do not run competing kiosk sessions.
 
+### Bookworm Lite: minimal X11 kiosk on a Zero 2 W
+
+This setup uses Xorg, Openbox, and Chromium without a full desktop or LightDM.
+The framebuffer driver plus explicit Chromium software rendering was verified
+on a Zero 2 W running 32-bit Bookworm with a club website and a live scoreboard
+rotating every 30 seconds. Use the framebuffer configuration when X's
+`modesetting` driver gives a black picture even though the console works; it is
+not necessary to replace a working accelerated desktop.
+
+On a fresh Lite installation, as the ordinary SSH/login user:
+
+```sh
+sudo apt update
+sudo apt install --no-install-recommends \
+  xserver-xorg xserver-xorg-video-fbdev xinit xauth x11-xserver-utils openbox \
+  chromium fonts-liberation dbus ca-certificates git python3-venv
+git clone https://github.com/edalatpour/pysign.git "$HOME/pysign"
+cd "$HOME/pysign"
+python3 -m venv .venv
+.venv/bin/python -m pip install -e '.[player]'
+```
+
+Configure the framebuffer X driver; keep the OS's existing KMS configuration.
+Do not add another Device configuration if this framebuffer setup already exists:
+
+```sh
+sudo mkdir -p /etc/X11/xorg.conf.d
+printf '%s\n' 'Section "Device"' '    Identifier "PiSign framebuffer"' \
+  '    Driver "fbdev"' '    Option "fbdev" "/dev/fb0"' 'EndSection' \
+  | sudo tee /etc/X11/xorg.conf.d/99-pisign-framebuffer.conf
+```
+
+For a fresh installation, create the following X startup script. On an existing
+kiosk, back up and edit its script instead of overwriting unrelated startup work.
+Replace the server URL below with your server if not using the hosted test server:
+
+```sh
+install -d -m 700 "$HOME/.local/state/pisign"
+cat > "$HOME/.xinitrc" <<'EOF'
+#!/bin/sh
+xset s off
+xset s noblank
+xset -dpms
+openbox &
+exec dbus-run-session -- "$HOME/pysign/.venv/bin/python" -m player run \
+  --software-rendering \
+  --server https://pisign.braveplant-d8d95ba6.centralus.azurecontainerapps.io \
+  >> "$HOME/.local/state/pisign/player.log" 2>&1
+EOF
+chmod 700 "$HOME/.xinitrc"
+sh -n "$HOME/.xinitrc"
+```
+
+Append this block to `~/.profile` **once**. It starts X only on the local first
+console, never in SSH. If you have a custom `~/.bash_profile`, ensure it sources
+`~/.profile` or put the block in the login startup file it actually uses.
+
+```sh
+cat >> "$HOME/.profile" <<'EOF'
+
+if [ -z "$DISPLAY" ] && [ "$(tty)" = "/dev/tty1" ]; then
+    exec startx -- -nocursor
+fi
+EOF
+sudo raspi-config
+```
+
+Select **System Options > Boot / Auto Login > Console Autologin**, not Desktop
+Autologin, then run `sudo reboot`. Do **not** also use `install-autostart` for this
+kiosk: the X startup script is its launcher. The monitor should show the pairing
+page; already-paired devices retain their identity and cached playlist.
+
+On an existing kiosk using a `--browser` software-rendering wrapper, after pulling
+this version replace that argument in `~/.xinitrc` with `--software-rendering`.
+The player then supplies the same flags without the wrapper. Keep the framebuffer
+X configuration and console auto-login; Git does not install those OS settings.
+Do not restore temporary diagnostic copies of the player source over an update.
+
+### Player state and recovery
+
 State is in `~/.local/state/pisign` (override with `--state-dir`). The directory
 is mode 0700, and credentials/cache files are atomically written as 0600. The
 saved identity is bound to the server origin; it is never sent through redirects
@@ -308,6 +394,16 @@ directory, so a locally authenticated site can retain its session. Logs:
 `chromium.log`, plus `player.log` when launched through labwc.
 Browser failures include a traceback in the player log output to identify the
 failing operation; Chromium still restarts after a five-second delay.
+If a busy page times out during a watermark/QR refresh, the player logs a warning
+and retries on a later refresh without restarting Chromium. Navigation failures
+and lost browser connections still trigger browser recovery.
+Navigation commands allow up to 30 seconds for Chromium to respond on slower
+devices; other browser commands have a five-second response deadline. These are
+browser-control deadlines, not guarantees that a remote page has finished loading.
+Playlist edits are fetched by a separate worker every 30 seconds and applied
+when playback next processes the update; slow browser commands can add delay.
+On reboot the player can initially show the cached playlist until its first
+successful configuration fetch. Rebooting does not clear pairing or the cache.
 
 After disconnection, the screen shows a revoked-credential message rather than
 silently re-enrolling. To transfer or re-pair a physical device, stop its player,
