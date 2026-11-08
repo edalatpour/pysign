@@ -1,12 +1,12 @@
 # Azure Container Apps
 
 The application still runs locally with SQLite using the commands in the
-[main README](../README.md). Azure is a separate environment with a separate
+[local setup guide](../docs/reference.md#server-local-setup). Azure is a separate environment with a separate
 PostgreSQL database or a private schema in an existing Azure SQL database;
 deployment does not copy local SQLite data.
 
 For an existing installation, read the
-[application rename migration notes](../README.md#updating-an-existing-installation-after-the-rename)
+[application rename migration notes](../docs/reference.md#updating-an-existing-installation-after-the-rename)
 before deploying: the resource, database, image, and environment-variable defaults
 have changed. These templates do not rename or migrate existing Azure resources.
 
