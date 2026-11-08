@@ -64,7 +64,13 @@ def validate_config(data):
         validated.append({"title": title, "url": url, "duration": duration})
     if data["state"] == "unpaired" and validated:
         raise ValueError("An unpaired device cannot have a playlist.")
-    return {"state": data["state"], "slides": validated}
+    config = {"state": data["state"], "slides": validated}
+    if data["state"] == "paired" and "name" in data:
+        name = data["name"]
+        if not isinstance(name, str) or not name.strip() or len(name) > 100:
+            raise ValueError("Device name must contain 1 to 100 characters.")
+        config["name"] = name
+    return config
 
 
 class API:

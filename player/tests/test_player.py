@@ -13,7 +13,7 @@ from player.storage import private_directory, read_json, write_json
 
 
 def playlist():
-    return {"state": "paired", "slides": [
+    return {"state": "paired", "name": "Lobby display", "slides": [
         {"title": "Scoreboard", "url": "https://example.com/scores", "duration": 5},
         {"title": "Calendar", "url": "https://example.com/calendar", "duration": 5},
     ]}
@@ -85,6 +85,24 @@ class PlayerTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     validate_config({"state": "paired", "slides": [{"title": "Bad", "url": url, "duration": duration}]})
         self.assertEqual(validate_config(playlist()), playlist())
+
+    def test_config_validation_rejects_invalid_device_names(self):
+        for name in [None, 123, "", " \n", "a" * 101]:
+            with self.subTest(name=name):
+                config = playlist()
+                config["name"] = name
+                with self.assertRaisesRegex(ValueError, "Device name"):
+                    validate_config(config)
+
+    def test_legacy_cached_config_without_name_is_still_valid(self):
+        config = playlist()
+        del config["name"]
+        write_json(self.state / "playlist.json", {"server": self.server, "config": config})
+        self.assertEqual(cached_config(self.state, self.server), config)
+
+    def test_unpaired_config_does_not_require_a_name(self):
+        config = {"state": "unpaired", "slides": []}
+        self.assertEqual(validate_config(config), config)
 
     def test_credentials_are_bound_to_server(self):
         write_json(self.state / "credentials.json", {"server": "https://other.example.com", "token": "a" * 43})
@@ -236,6 +254,41 @@ class PlayerTests(unittest.TestCase):
         ])
         worker.stopping.set.assert_called_once()
         browser.close.assert_called_once()
+
+    def test_ready_screen_shows_cached_name_and_updates_on_poll(self):
+        initial = {"state": "paired", "name": "Lobby display", "slides": []}
+        changed = {**initial, "name": "Reception <East> & West"}
+        write_json(self.state / "playlist.json", {"server": self.server, "config": initial})
+        worker = Mock()
+        worker.updates.get_nowait.side_effect = [
+            ("offline", "Offline"), ("config", validate_config(changed)),
+        ]
+        browser = Browser(self.state, executable="/usr/bin/chromium")
+        with patch.object(browser, "navigate") as navigate, patch.object(browser, "status", wraps=browser.status) as show:
+            with patch("player.runtime.time.sleep", side_effect=[None, KeyboardInterrupt]):
+                with self.assertRaises(KeyboardInterrupt):
+                    run_player(browser, worker, self.state, self.server)
+        self.assertEqual(navigate.call_count, 2)
+        self.assertEqual([call.args[0] for call in show.call_args_list], [initial["name"], changed["name"]])
+        status = (self.state / "status.html").read_text()
+        self.assertIn("<h1>Reception &lt;East&gt; &amp; West</h1>", status)
+        self.assertNotIn("Ready to display", status)
+        self.assertIn("Your display is paired.", status)
+        worker.stopping.set.assert_called_once()
+
+    def test_ready_screen_with_legacy_cache_keeps_previous_heading(self):
+        config = {"state": "paired", "slides": []}
+        write_json(self.state / "playlist.json", {"server": self.server, "config": config})
+        worker = Mock()
+        worker.updates.get_nowait.return_value = ("offline", "Offline")
+        browser = Mock()
+        browser.process.poll.return_value = None
+        with patch("player.runtime.time.sleep", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                run_player(browser, worker, self.state, self.server)
+        browser.status.assert_called_once_with(
+            "Ready to display", "Your display is paired.\nAdd URLs in your PiSign workspace.",
+        )
 
     def test_browser_navigates_one_tab_and_recovers_status_after_close(self):
         browser = Browser(self.state, executable="/usr/bin/chromium")

@@ -383,6 +383,10 @@ devices; other browser commands have a five-second response deadline. These are
 browser-control deadlines, not guarantees that a remote page has finished loading.
 Playlist edits are fetched by a separate worker every 30 seconds and applied
 when playback next processes the update; slow browser commands can add delay.
+When a paired display has no URLs, its status heading shows the registered device
+name. Name changes are applied on the next configuration poll and cached for
+offline use. Older caches without a name show "Ready to display" until a successful
+poll supplies the name.
 On reboot the player can initially show the cached playlist until its first
 successful configuration fetch. Rebooting does not clear pairing or the cache.
 
