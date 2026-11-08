@@ -402,6 +402,42 @@ remove its old entry in the web UI, and reset locally:
 Reset removes the device identity, cached playlist, and Chromium profile/cookies.
 It does not delete the old server entry automatically.
 
+### Remote player restart
+
+In a display's dashboard settings, **Restart player** queues a restart for that
+display only. The action requires its owner's signed-in session and CSRF-protected
+POST. The device retrieves the request through its existing authenticated HTTPS
+configuration poll; no inbound port, SSH, root access, or new launcher is needed.
+This restarts the player and Chromium, **not the operating system**.
+
+The server retains the latest request ID, requesting user, request/expiry times,
+and completion time per display. Only one request can be pending; repeated clicks
+do not extend its ten-minute expiry. Pending requests survive server restarts.
+Requests are not saved in the offline playlist. Offline and older players that
+ignore the new field stay pending until expiry; update existing players manually
+once using the README instructions before relying on remote restart.
+
+Before restarting, the player stops the polling worker and closes Chromium, then
+atomically saves a server-bound receipt in `~/.local/state/pisign/restart.json`,
+releases its process lock, and re-executes the original Python invocation. It
+aborts the restart explicitly if worker shutdown or receipt persistence fails. This
+preserves virtualenv, interpreter/CLI options, foreground/desktop/X11 launchers,
+pairing credentials, cached playlist, and browser profile. The new process
+acknowledges the request only after Chromium starts successfully and an
+authenticated configuration poll succeeds. Duplicate deliveries and failed
+acknowledgements do not cause restart loops; acknowledgements are retried while
+normal playlist polling continues. The player's clock should be synchronized
+for expiry checks and HTTPS.
+
+Refresh display settings to check status. **Completed** means the restarted
+process connected to Chromium and acknowledged the request, not that every
+playlist website loaded successfully. **Expired without confirmation** does not
+prove the process never restarted: its acknowledgement could have been delayed.
+A new request can be made after completion or expiry. Local `reset --yes` also
+removes the receipt; device removal/revocation otherwise keeps its existing
+behavior. Arbitrary shell commands, OS reboot, remote reset, and player updates
+are not supported by this action.
+
 ### Playback behavior and limits
 
 Chromium stays in full-screen kiosk mode without tabs, toolbars, or browser chrome.

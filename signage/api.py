@@ -1,4 +1,5 @@
 import json
+import logging
 import secrets
 from datetime import timedelta
 from functools import wraps
@@ -9,10 +10,11 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
-from .models import Device
+from .models import Device, PlayerRestart
 from .security import allow_request, digest_token
 
 PAIRING_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+logger = logging.getLogger(__name__)
 
 
 def pairing_code():
@@ -75,10 +77,39 @@ def config(request):
     Device.objects.filter(pk=device.pk).update(last_seen=timezone.now())
     if device.owner_id is None:
         return JsonResponse({"state": "unpaired", "slides": []})
-    return JsonResponse({
+    result = {
         "state": "paired", "name": device.name,
         "slides": list(device.slides.values("title", "url", "duration")),
-    })
+    }
+    restart = PlayerRestart.objects.filter(
+        device=device, completed_at__isnull=True, expires_at__gt=timezone.now(),
+    ).first()
+    if restart is not None:
+        result["restart"] = {
+            "id": str(restart.request_id), "expires_at": restart.expires_at.isoformat(),
+        }
+    return JsonResponse(result)
+
+
+@csrf_exempt
+@require_POST
+@device_required
+def restart_completed(request, request_id):
+    now = timezone.now()
+    restart = PlayerRestart.objects.filter(device=request.device, request_id=request_id).first()
+    if restart is None or request.device.owner_id is None:
+        return JsonResponse({"status": "obsolete"})
+    if restart.completed_at is not None:
+        return JsonResponse({"status": "completed"})
+    if restart.expires_at <= now:
+        return JsonResponse({"status": "expired"})
+    updated = PlayerRestart.objects.filter(
+        device=request.device, request_id=request_id, completed_at__isnull=True, expires_at__gt=now,
+    ).update(completed_at=now)
+    if not updated:
+        return JsonResponse({"status": "obsolete"})
+    logger.info("Player restart %s completed for device %s.", request_id, request.device.pk)
+    return JsonResponse({"status": "completed"})
 
 
 @csrf_exempt
