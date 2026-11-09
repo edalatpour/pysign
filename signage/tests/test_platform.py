@@ -8,7 +8,7 @@ from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
-from signage.models import Device, PlayerRestart, RateLimit, Slide
+from signage.models import Device, PlayerReset, PlayerRestart, RateLimit, Slide
 from signage.security import digest_token
 
 
@@ -60,6 +60,7 @@ class PlatformTests(TestCase):
             ("device", {}),
             ("remove-device", {}),
             ("restart-player", {}),
+            ("reset-player", {}),
             ("add-slide", {}),
             ("edit-slide", {"slide_id": foreign_slide.pk}),
             ("remove-slide", {"slide_id": foreign_slide.pk}),
@@ -144,6 +145,7 @@ class PlatformTests(TestCase):
         csrf_client.force_login(self.owner)
         for name, kwargs in [
             ("remove-device", {}), ("restart-player", {}),
+            ("reset-player", {}),
             ("remove-slide", {"slide_id": self.slide.pk}),
         ]:
             url = self.device_url(name, **kwargs)
@@ -157,6 +159,20 @@ class PlatformTests(TestCase):
             reverse("api-config"), HTTP_AUTHORIZATION=f"Bearer {self.token}",
         ).status_code, 401)
         self.assertFalse(Slide.objects.filter(pk=self.slide.pk).exists())
+
+    def test_revocation_is_under_collapsed_advanced_settings(self):
+        response = self.client.get(self.device_url())
+        self.assertContains(response, "<summary>Advanced settings</summary>", html=True)
+        self.assertContains(response, "<h2>Revoke device access</h2>", html=True)
+        self.assertContains(response, "lost, stolen, or compromised device")
+        self.assertContains(response, "It does not remotely erase browser cookies.")
+        self.assertContains(response, "Use this to transfer, retire, or re-pair a working display.")
+        self.assertNotContains(response, "Disconnect permanently")
+        content = response.content.decode()
+        advanced = content[content.index('<details class="card">'):content.index("</details>")]
+        self.assertNotIn(" open", advanced.split(">", 1)[0])
+        self.assertIn(reverse("remove-device", kwargs={"device_id": self.device.pk}), advanced)
+        self.assertLess(content.index("<h2>Reset / unpair</h2>"), content.index("<details"))
 
     def test_restart_requires_user_session_not_device_token(self):
         client = Client()
@@ -273,6 +289,105 @@ class PlatformTests(TestCase):
         credentials = response.json()
         device = Device.objects.get(pk=credentials["device_id"])
         return device, credentials["token"]
+
+    def queue_reset(self):
+        self.assertEqual(self.client.post(
+            self.device_url("reset-player"), {"confirm": "on"},
+        ).status_code, 302)
+        return PlayerReset.objects.get(device=self.device)
+
+    def complete_reset(self, request_id, token=None):
+        return self.client.post(
+            reverse("api-reset-completed", kwargs={"request_id": request_id}),
+            HTTP_AUTHORIZATION=f"Bearer {token or self.token}",
+        )
+
+    def test_reset_requires_confirmation_and_user_session(self):
+        response = self.client.post(self.device_url("reset-player"), follow=True)
+        self.assertContains(response, "Confirm deletion")
+        self.assertFalse(PlayerReset.objects.exists())
+        client = Client()
+        self.assertEqual(client.post(
+            self.device_url("reset-player"), {"confirm": "on"},
+            HTTP_AUTHORIZATION=f"Bearer {self.token}",
+        ).status_code, 302)
+        self.assertFalse(PlayerReset.objects.exists())
+
+    def test_reset_is_durable_deduplicated_and_prioritized_over_restart(self):
+        self.queue_restart()
+        now = timezone.now()
+        with patch("signage.views.timezone.now", return_value=now):
+            reset = self.queue_reset()
+            repeated = self.queue_reset()
+        self.assertEqual(reset.request_id, repeated.request_id)
+        self.assertEqual(reset.expires_at, now + timedelta(minutes=10))
+        self.assertEqual(reset.requested_by, self.owner)
+        self.assertEqual(PlayerReset.objects.count(), 1)
+        response = self.client.get(reverse("api-config"), HTTP_AUTHORIZATION=f"Bearer {self.token}")
+        self.assertEqual(response["Cache-Control"], "no-store")
+        self.assertEqual(response.json()["reset"], {
+            "id": str(reset.request_id), "expires_at": reset.expires_at.isoformat(),
+        })
+        self.assertNotIn("restart", response.json())
+        self.assertContains(self.client.get(self.device_url()), "Reset pending")
+        self.device.refresh_from_db()
+        self.assertEqual(self.device.owner, self.owner)
+        self.assertEqual(self.device.slides.count(), 1)
+
+    def test_reset_unpairs_and_clears_playlist_without_revoking_credential(self):
+        self.queue_restart()
+        reset = self.queue_reset()
+        response = self.complete_reset(reset.request_id)
+        self.assertEqual(response.json(), {"status": "completed"})
+        self.assertEqual(response["Cache-Control"], "no-store")
+        self.device.refresh_from_db()
+        self.assertIsNone(self.device.owner_id)
+        self.assertIsNone(self.device.pairing_code)
+        self.assertIsNone(self.device.pairing_expires_at)
+        self.assertEqual(self.device.token_digest, digest_token(self.token))
+        self.assertFalse(self.device.slides.exists())
+        self.assertFalse(PlayerRestart.objects.exists())
+        self.assertNotContains(self.client.get(reverse("dashboard")), "Scoreboard")
+        self.assertEqual(self.client.get(self.device_url()).status_code, 404)
+        self.assertEqual(self.client.get(
+            reverse("api-config"), HTTP_AUTHORIZATION=f"Bearer {self.token}",
+        ).json(), {"state": "unpaired", "slides": []})
+        code = self.client.post(
+            reverse("api-pairing"), HTTP_AUTHORIZATION=f"Bearer {self.token}",
+        ).json()["code"]
+        self.client.force_login(self.other)
+        self.client.post(reverse("claim"), {"code": code, "name": "New owner"})
+        completed_at = PlayerReset.objects.get(device=self.device).completed_at
+        self.assertEqual(self.complete_reset(reset.request_id).json(), {"status": "completed"})
+        self.device.refresh_from_db()
+        self.assertEqual(self.device.owner, self.other)
+        self.assertEqual(PlayerReset.objects.get(device=self.device).completed_at, completed_at)
+
+    def test_reset_expiry_limits_delivery_but_not_delayed_completion(self):
+        reset = self.queue_reset()
+        PlayerReset.objects.filter(device=self.device).update(expires_at=timezone.now() - timedelta(seconds=1))
+        self.assertNotIn("reset", self.client.get(
+            reverse("api-config"), HTTP_AUTHORIZATION=f"Bearer {self.token}",
+        ).json())
+        self.assertContains(self.client.get(self.device_url()), "Reset request expired")
+        self.assertEqual(self.complete_reset(reset.request_id).json(), {"status": "completed"})
+
+    def test_reset_replacement_and_completion_are_device_scoped(self):
+        reset = self.queue_reset()
+        url = reverse("api-reset-completed", kwargs={"request_id": reset.request_id})
+        self.assertEqual(self.client.post(url).status_code, 401)
+        self.assertEqual(self.client.get(url, HTTP_AUTHORIZATION=f"Bearer {self.token}").status_code, 405)
+        self.assertEqual(self.complete_reset(reset.request_id, "b" * 43).json(), {"status": "obsolete"})
+        self.assertEqual(self.complete_reset(uuid.uuid4()).json(), {"status": "obsolete"})
+        PlayerReset.objects.filter(device=self.device).update(expires_at=timezone.now() - timedelta(seconds=1))
+        replacement = self.queue_reset()
+        self.assertNotEqual(replacement.request_id, reset.request_id)
+        self.assertEqual(self.complete_reset(reset.request_id).json(), {"status": "obsolete"})
+        self.device.refresh_from_db()
+        self.assertEqual(self.device.owner, self.owner)
+        self.client.post(self.device_url("remove-device"))
+        self.assertFalse(PlayerReset.objects.exists())
+        self.assertEqual(self.complete_reset(replacement.request_id).status_code, 401)
 
     def test_registration_stores_only_token_digest(self):
         device, token = self.register_device()

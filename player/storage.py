@@ -1,7 +1,21 @@
 import json
 import os
+import shutil
 import tempfile
 from pathlib import Path
+
+
+def reset_state(state_dir, clear_identity=False):
+    names = ["playlist.json", "status.html", "restart.json"]
+    if clear_identity:
+        names += ["credentials.json", "reset.json"]
+    for name in names:
+        (state_dir / name).unlink(missing_ok=True)
+    profile = state_dir / "browser-profile"
+    if profile.is_symlink():
+        profile.unlink()
+    elif profile.exists():
+        shutil.rmtree(profile)
 
 
 def private_directory(path):

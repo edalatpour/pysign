@@ -43,10 +43,25 @@
       <form method="post" action="{% url 'restart-player' device.pk %}">{% csrf_token %}<button{% if restart.status == "pending" %} disabled{% endif %}>Restart player</button></form>
     </section>
     <section class="card">
-      <h2>Disconnect display</h2>
-      <p class="muted">Revokes this player's credential and deletes its playlist. Physical access is required to reset and pair it again.</p>
-      <form method="post" action="{% url 'remove-device' device.pk %}">{% csrf_token %}<button class="danger">Disconnect permanently</button></form>
+      <h2>Reset / unpair</h2>
+      <p class="muted">Use this to transfer, retire, or re-pair a working display. Deletes the playlist and browser cookies, removes this display from your account, and shows a new pairing code. Requires a player with remote reset support. This does not reboot the Pi.</p>
+      {% if reset.status == "pending" %}
+        <p role="status">Reset pending. Expires at {{ reset.expires_at }}. Refresh this page to check; the display disappears from your account when complete.</p>
+      {% elif reset.status == "expired" %}
+        <p role="status">Reset request expired without confirmation. The display may be offline or running an older player.</p>
+      {% endif %}
+      <form method="post" action="{% url 'reset-player' device.pk %}">{% csrf_token %}
+        <p><label><input type="checkbox" name="confirm" required> I understand the playlist and browser sessions will be deleted.</label></p>
+        <button class="danger"{% if reset.status == "pending" %} disabled{% endif %}>Reset / unpair</button>
+      </form>
     </section>
+    <details class="card">
+      <summary>Advanced settings</summary>
+      <h2>Revoke device access</h2>
+      <p class="muted">Use this for a lost, stolen, or compromised device. Immediately revokes its server credential and removes the display and playlist from your account, without waiting for the player to cooperate. It does not remotely erase browser cookies. Use Reset / unpair for normal transfers or re-pairing.</p>
+      <p class="muted">Physical access is required to reset and pair this player again.</p>
+      <form method="post" action="{% url 'remove-device' device.pk %}">{% csrf_token %}<button class="danger">Revoke device access</button></form>
+    </details>
   </aside>
 </div>
 {% endblock %}

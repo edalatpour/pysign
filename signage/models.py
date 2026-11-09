@@ -67,6 +67,23 @@ class PlayerRestart(models.Model):
         return "pending"
 
 
+class PlayerReset(models.Model):
+    device = models.OneToOneField(Device, on_delete=models.CASCADE, primary_key=True, related_name="reset")
+    request_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    requested_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
+    requested_at = models.DateTimeField()
+    expires_at = models.DateTimeField()
+    completed_at = models.DateTimeField(null=True)
+
+    @property
+    def status(self):
+        if self.completed_at is not None:
+            return "completed"
+        if self.expires_at <= timezone.now():
+            return "expired"
+        return "pending"
+
+
 class RateLimit(models.Model):
     key = models.CharField(max_length=64)
     window = models.BigIntegerField()

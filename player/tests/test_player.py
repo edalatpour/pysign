@@ -10,11 +10,11 @@ from urllib.error import HTTPError, URLError
 from player.__main__ import install_autostart, main, parser
 from player.browser import Browser, BrowserError
 from player.client import (
-    API, APIError, ConfigWorker, CredentialRevoked, NoRedirects, RestartRequested,
+    API, APIError, ConfigWorker, CredentialRevoked, NoRedirects, ResetRequested, RestartRequested,
     server_url, validate_config, validate_restart,
 )
 from player.runtime import Rotation, cached_config, run_player
-from player.storage import private_directory, read_json, write_json
+from player.storage import private_directory, read_json, reset_state, write_json
 
 
 def playlist():
@@ -341,6 +341,145 @@ class PlayerTests(unittest.TestCase):
         with patch("player.__main__.sys.argv", ["player", "reset", "--yes", "--state-dir", str(self.state)]):
             main()
         self.assertFalse((self.state / "restart.json").exists())
+
+    def save_reset_receipt(self, command, acknowledged=False):
+        write_json(self.state / "reset.json", {
+            "server": self.server, "id": command["id"], "acknowledged": acknowledged,
+        })
+        write_json(self.state / "credentials.json", {"server": self.server, "token": "a" * 43})
+
+    def test_reset_delivery_takes_priority_and_is_never_cached(self):
+        command = self.restart_command()
+        worker = ConfigWorker(self.server, self.state, "Pi")
+        worker.api = Mock()
+        write_json(self.state / "credentials.json", {"server": self.server, "token": "a" * 43})
+        worker.api.call.return_value = {**playlist(), "reset": command, "restart": self.restart_command()}
+        self.assertEqual(self.poll_once(worker), ("config", {**playlist(), "reset": command}))
+        self.assertFalse((self.state / "playlist.json").exists())
+        self.assertFalse((self.state / "reset.json").exists())
+
+    def test_reset_invalid_expired_and_duplicate_deliveries(self):
+        command = self.restart_command()
+        self.save_reset_receipt(command, acknowledged=True)
+        worker = ConfigWorker(self.server, self.state, "Pi")
+        worker.api = Mock()
+        worker.api.call.return_value = {**playlist(), "reset": command}
+        self.assertEqual(self.poll_once(worker), ("config", playlist()))
+        command = self.restart_command()
+        command["expires_at"] = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+        worker.api.call.return_value = {**playlist(), "reset": command}
+        self.assertEqual(self.poll_once(worker), ("config", playlist()))
+        for invalid in [None, {}, {"id": "bad", "expires_at": "bad"}]:
+            worker.api.call.return_value = {**playlist(), "reset": invalid}
+            self.assertEqual(self.poll_once(worker)[0], "fatal")
+
+    def test_reset_acknowledgement_retries_before_fetching_or_caching_configuration(self):
+        command = self.restart_command()
+        self.save_reset_receipt(command)
+        worker = ConfigWorker(self.server, self.state, "Pi")
+        worker.api = Mock()
+        worker.api.call.side_effect = [APIError("Offline")]
+        self.assertEqual(self.poll_once(worker)[0], "offline")
+        worker.api.call.assert_called_once_with(
+            f"/api/device/resets/{command['id']}/completed/", token="a" * 43, data={},
+        )
+        self.assertFalse((self.state / "playlist.json").exists())
+        self.assertFalse(read_json(self.state / "reset.json")["acknowledged"])
+        worker.api.call.side_effect = [
+            {"status": "completed"}, {"state": "unpaired", "slides": []}, {"code": "ABCDE23456"},
+        ]
+        self.assertEqual(self.poll_once(worker), ("config", {
+            "state": "unpaired", "slides": [], "code": "ABCDE23456",
+        }))
+        self.assertTrue(read_json(self.state / "reset.json")["acknowledged"])
+        worker.api.call.side_effect = [{"state": "unpaired", "slides": []}, {"code": "ABCDE23456"}]
+        self.assertEqual(self.poll_once(worker)[0], "config")
+
+    def test_reset_receipt_is_validated_and_local_reset_clears_it(self):
+        write_json(self.state / "reset.json", {
+            "server": "https://other.example.com", "id": str(uuid.uuid4()), "acknowledged": False,
+        })
+        with self.assertRaisesRegex(ValueError, "saved reset receipt"):
+            ConfigWorker(self.server, self.state, "Pi")
+        reset_state(self.state, clear_identity=True)
+        self.assertFalse((self.state / "reset.json").exists())
+
+    def test_runtime_saves_reset_receipt_after_shutdown_without_playback(self):
+        command = self.restart_command()
+        worker = Mock()
+        worker.is_alive.return_value = False
+        worker.updates.get_nowait.return_value = ("config", {
+            **playlist(), "reset": command, "restart": self.restart_command(),
+        })
+        browser = Mock()
+        with self.assertRaises(ResetRequested):
+            run_player(browser, worker, self.state, self.server)
+        self.assertEqual(read_json(self.state / "reset.json"), {
+            "server": self.server, "id": command["id"], "acknowledged": False,
+        })
+        worker.join.assert_called_once_with(timeout=22)
+        browser.close.assert_called_once()
+        browser.navigate.assert_not_called()
+        self.assertFalse((self.state / "restart.json").exists())
+
+    def test_reset_shutdown_and_receipt_failures_abort_explicitly(self):
+        for alive in [True, False]:
+            worker = Mock()
+            worker.is_alive.return_value = alive
+            worker.updates.get_nowait.return_value = ("config", {
+                **playlist(), "reset": self.restart_command(),
+            })
+            with patch("player.runtime.write_json", side_effect=OSError("Disk full")):
+                with self.assertRaises(OSError):
+                    run_player(Mock(), worker, self.state, self.server)
+            self.assertFalse((self.state / "reset.json").exists())
+
+    def test_pending_reset_cleanup_resumes_before_browser_and_preserves_identity(self):
+        command = self.restart_command()
+        self.save_reset_receipt(command)
+        credentials = read_json(self.state / "credentials.json")
+        write_json(self.state / "playlist.json", {"server": self.server, "config": playlist()})
+        write_json(self.state / "restart.json", {
+            "server": self.server, "id": str(uuid.uuid4()), "acknowledged": True,
+        })
+        profile = private_directory(self.state / "browser-profile")
+        (profile / "Cookies").write_bytes(b"cookies")
+        (self.state / "status.html").write_text("Old display")
+
+        def browser_started(*args, **kwargs):
+            for name in ["playlist.json", "restart.json", "status.html", "browser-profile"]:
+                self.assertFalse((self.state / name).exists())
+            self.assertEqual(read_json(self.state / "credentials.json"), credentials)
+            return Mock()
+
+        with patch("player.__main__.sys.argv", [
+            "player", "run", "--server", self.server, "--state-dir", str(self.state),
+        ]), patch("player.__main__.Browser", side_effect=browser_started), \
+                patch("player.__main__.run_player"):
+            main()
+        self.assertFalse(read_json(self.state / "reset.json")["acknowledged"])
+
+    def test_reset_cleanup_failure_does_not_reexec_or_acknowledge(self):
+        self.save_reset_receipt(self.restart_command())
+        with patch("player.__main__.sys.argv", [
+            "player", "run", "--server", self.server, "--state-dir", str(self.state),
+        ]), patch("player.__main__.reset_state", side_effect=OSError("Permission denied")), \
+                patch("player.__main__.Browser") as browser, \
+                patch("player.__main__.os.execv") as execute:
+            with self.assertRaisesRegex(SystemExit, "Permission denied"):
+                main()
+        browser.assert_not_called()
+        execute.assert_not_called()
+        self.assertFalse(read_json(self.state / "reset.json")["acknowledged"])
+
+    def test_unpaired_poll_removes_previous_cache(self):
+        write_json(self.state / "playlist.json", {"server": self.server, "config": playlist()})
+        write_json(self.state / "credentials.json", {"server": self.server, "token": "a" * 43})
+        worker = ConfigWorker(self.server, self.state, "Pi")
+        worker.api = Mock()
+        worker.api.call.side_effect = [{"state": "unpaired", "slides": []}, {"code": "ABCDE23456"}]
+        self.assertEqual(self.poll_once(worker)[0], "config")
+        self.assertFalse((self.state / "playlist.json").exists())
 
     def test_outage_preserves_cached_playlist(self):
         write_json(self.state / "playlist.json", {"server": self.server, "config": playlist()})

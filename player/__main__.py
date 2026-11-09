@@ -9,9 +9,9 @@ import sys
 from pathlib import Path
 
 from .browser import Browser, BrowserError
-from .client import ConfigWorker, RestartRequested, server_url
+from .client import ConfigWorker, ResetRequested, RestartRequested, command_receipt, server_url
 from .runtime import run_player
-from .storage import private_directory
+from .storage import private_directory, reset_state
 
 
 def parser():
@@ -87,13 +87,7 @@ def main():
         if args.command == "reset":
             if not args.yes:
                 raise SystemExit("Reset discards local credentials and cached URLs. Confirm with --yes.")
-            for name in ("credentials.json", "playlist.json", "status.html", "restart.json"):
-                (args.state_dir / name).unlink(missing_ok=True)
-            profile = args.state_dir / "browser-profile"
-            if profile.is_symlink():
-                profile.unlink()
-            elif profile.exists():
-                shutil.rmtree(profile)
+            reset_state(args.state_dir, clear_identity=True)
             print("Local identity reset. Remove the old display in the web UI, then run to pair again.")
             return
         if not args.server:
@@ -103,10 +97,19 @@ def main():
             if args.command == "install-autostart":
                 install_autostart(args, server)
                 return
+            receipt = command_receipt(args.state_dir, server, "reset")
+            if receipt is not None and not receipt["acknowledged"]:
+                reset_state(args.state_dir)
             browser = Browser(args.state_dir, args.browser, software_rendering=args.software_rendering)
             worker = ConfigWorker(server, args.state_dir, args.name)
             run_player(browser, worker, args.state_dir, server)
         except RestartRequested:
+            restart = True
+        except ResetRequested:
+            try:
+                reset_state(args.state_dir)
+            except OSError as exc:
+                raise SystemExit(f"Player reset failed: {exc}") from exc
             restart = True
         except (BrowserError, OSError, ValueError) as exc:
             raise SystemExit(str(exc)) from exc
