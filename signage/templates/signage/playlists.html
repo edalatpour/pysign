@@ -9,13 +9,13 @@
 {% for playlist in playlists %}
   <a class="card display" href="{% url 'playlist' playlist.pk %}">
     <h2>{{ playlist.name }}</h2>
-    <p class="muted">{{ playlist.slide_count }} URL{{ playlist.slide_count|pluralize }} / {{ playlist.device_count }} display{{ playlist.device_count|pluralize }}</p>
+    <p class="muted">{{ playlist.slide_count }} {{ playlist.slide_count|pluralize:"entry,entries" }} / {{ playlist.device_count }} display{{ playlist.device_count|pluralize }}</p>
     <span class="text-link">Manage playlist &rarr;</span>
   </a>
 {% empty %}
   <section class="card empty">
     <h2>Your first playlist starts here.</h2>
-    <p class="muted">Add URLs to a playlist, then select it in each display's settings.</p>
+    <p class="muted">Add URLs or assets to a playlist, then select it in each display's settings.</p>
     <a class="button" href="{% url 'create-playlist' %}">Create your first playlist</a>
   </section>
 {% endfor %}

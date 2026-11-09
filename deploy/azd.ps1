@@ -207,7 +207,7 @@ function Assert-SharedEnvironment {
     }
     $apps = @(Invoke-Azure @(
         "containerapp", "list", "--query",
-        "[?name=='$prefix' && properties.managedEnvironmentId=='$($shared.id)']", "--output", "json"
+        "[?(name=='$prefix' || name=='$prefix-documents') && properties.managedEnvironmentId=='$($shared.id)']", "--output", "json"
     ) | ConvertFrom-Json)
     foreach ($app in $apps) { Assert-PiSignOwnership $app }
     return @{ Id = $shared.id; WorkloadProfile = $profileName }

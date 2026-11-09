@@ -14,7 +14,8 @@ class PlaylistMigrationTests(TransactionTestCase):
         self.apps = executor.loader.project_state(self.migrate_from).apps
 
     def tearDown(self):
-        MigrationExecutor(connection).migrate(self.migrate_to)
+        executor = MigrationExecutor(connection)
+        executor.migrate(executor.loader.graph.leaf_nodes())
         super().tearDown()
 
     def test_legacy_urls_are_combined_per_owner_and_displays_share_default(self):

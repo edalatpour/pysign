@@ -11,11 +11,12 @@ def reset_state(state_dir, clear_identity=False):
         names += ["credentials.json", "reset.json"]
     for name in names:
         (state_dir / name).unlink(missing_ok=True)
-    profile = state_dir / "browser-profile"
-    if profile.is_symlink():
-        profile.unlink()
-    elif profile.exists():
-        shutil.rmtree(profile)
+    for name in ("browser-profile", "assets"):
+        path = state_dir / name
+        if path.is_symlink():
+            path.unlink()
+        elif path.exists():
+            shutil.rmtree(path)
 
 
 def private_directory(path):

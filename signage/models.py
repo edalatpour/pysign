@@ -56,10 +56,36 @@ class Device(models.Model):
         return self.last_seen is not None and self.last_seen > timezone.now() - timedelta(seconds=90)
 
 
+class Asset(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="assets")
+    name = models.CharField(max_length=100)
+    content_type = models.CharField(max_length=32)
+    size = models.PositiveBigIntegerField()
+    sha256 = models.CharField(max_length=64)
+    page_count = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["name", "id"]
+
+    def __str__(self):
+        return self.name
+
+    @property
+    def storage_key(self):
+        return f"assets/{self.pk}"
+
+    @property
+    def is_video(self):
+        return self.content_type.startswith("video/")
+
+
 class Slide(models.Model):
     playlist = models.ForeignKey(Playlist, on_delete=models.CASCADE, related_name="slides")
     title = models.CharField(max_length=100)
-    url = models.URLField(max_length=2048, validators=[validate_display_url])
+    url = models.URLField(max_length=2048, blank=True, default="", validators=[validate_display_url])
+    asset = models.ForeignKey(Asset, on_delete=models.PROTECT, null=True, blank=True, related_name="slides")
     show_qr = models.BooleanField(default=True)
     qr_url = models.URLField(max_length=2048, blank=True, default="", validators=[validate_display_url])
     duration = models.PositiveIntegerField(
@@ -69,6 +95,20 @@ class Slide(models.Model):
 
     class Meta:
         ordering = ["position", "id"]
+        constraints = [
+            models.CheckConstraint(
+                condition=(models.Q(asset__isnull=True) & ~models.Q(url=""))
+                | (models.Q(asset__isnull=False) & models.Q(url="")),
+                name="slide_url_or_asset",
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        if bool(self.url) == bool(self.asset_id):
+            raise ValidationError("Choose either a URL or an asset, not both.")
+        if self.asset_id and self.playlist_id and self.asset.owner_id != self.playlist.owner_id:
+            raise ValidationError({"asset": "Choose an asset from your own library."})
 
 
 class PlayerRestart(models.Model):

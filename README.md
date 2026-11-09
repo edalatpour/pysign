@@ -12,8 +12,9 @@ The player targets the Raspberry Pi Zero 2 W; keep pages lightweight on its
 512 MB of RAM.
 
 Each signed-in user has private collections of displays and playlists. A playlist
-is an ordered list of HTTP(S) URLs, with a duration for each page. Assign one
-playlist to each display; multiple displays can use the same playlist. You manage
+is an ordered list of HTTP(S) URLs or private uploaded assets, with a duration
+for each entry. Assign one playlist to each display; multiple displays can use
+the same playlist. You manage
 playlists in your browser rather than editing files on every Pi.
 
 ## How it works
@@ -26,12 +27,15 @@ Your browser -- Entra sign-in --> PiSign dashboard on Azure
 Raspberry Pi -- HTTPS configuration polls -> PiSign API
       |
       +-- Chromium loads playlist URLs directly from their websites
+      +-- Player downloads assigned private assets through the authenticated API
 ```
 
 The **server** handles sign-in, display pairing, playlists, and device status.
 The **player** runs on each Pi, fetches its configuration, and navigates a single
-Chromium kiosk tab through the playlist. The server does not fetch, render, or
-stream the displayed pages; those sites must be reachable from the Pi.
+Chromium kiosk tab through the playlist. The server does not fetch or render
+external URLs; those sites must be reachable from the Pi. Uploaded assets are
+different: the server stores them privately,
+and documents are rasterized by a separate internal conversion service.
 
 A new player shows a short-lived pairing code. Claim it in the dashboard to
 attach that device to your account. After pairing, it authenticates to the API
@@ -40,8 +44,9 @@ with its own device credential, not your browser session or Microsoft account.
 Players poll every 30 seconds, sending a heartbeat and checking for playlist
 changes. The dashboard marks a display offline after 90 seconds without contact.
 During a server or network outage, the player keeps rotating its last saved
-playlist, even after reboot. **This caches the playlist, not the websites**:
-uncached remote content still needs a network connection.
+playlist, even after reboot. Downloaded assets work offline; external websites
+are not downloaded by the player and uncached remote content still needs a
+network connection.
 
 ## The server on Azure
 
@@ -57,6 +62,8 @@ PiSign's Django dashboard and API run together in a Linux container on
 | Managed identity | Gives the app access to registry images and Key Vault without embedded Azure credentials. |
 | Log Analytics | Collects application and deployment logs. |
 | Container Apps jobs | Run database migrations before rollout and daily cleanup of expired records. |
+| Azure Blob Storage | Private uploaded assets, accessible through the authenticated PiSign backend only. |
+| Internal document converter | Converts PDF, Word and PowerPoint documents into page images without admin/storage credentials. |
 
 You can instead use an **existing Azure SQL database** with an isolated `pisign`
 schema and managed-identity authentication. That path can also reuse an existing
@@ -144,6 +151,40 @@ Each URL's **Show QR code** checkbox is checked by default. Uncheck it and save
 to omit QR generation and display for that URL; the PiSign logo remains visible.
 The optional **QR code URL** can point somewhere different from the displayed
 page. Leave it blank to use the current page URL, including redirects.
+
+### Upload images, videos and documents
+
+Open **Assets** to upload once and reuse content in multiple playlists. Supported
+formats are JPEG, PNG and static WebP images; MP4 (H.264/AAC) and WebM
+(VP8/VP9 with Opus/Vorbis) videos; PDF; Word (`.doc`, `.docx`); and PowerPoint
+(`.ppt`, `.pptx`). HTML, SVG, animated images and macro-enabled Office formats
+are not supported. Defaults are 100 MiB per upload and 1 GiB stored per account.
+Images are limited to 16 megapixels and videos to 4K and 24 hours; lightweight
+content is strongly recommended for the Pi Zero 2 W.
+
+Documents are converted into static page images, up to 50 pages, with a maximum
+edge of 1920 pixels. Only the rendered pages are retained, not the original
+document. Use **Preview document** to check every page: missing fonts and complex
+layouts may change, and animations, links and embedded media are not preserved.
+Password-protected or unrenderable documents are rejected.
+
+In a playlist entry, enter **either** an external URL **or** select an asset.
+For documents, the entry duration applies to **each page**; for images it is
+the display duration, and videos autoplay muted and loop for that duration.
+For private assets, turn off **Show QR code** or supply an explicit public QR
+code URL; PiSign never turns an authenticated download or local file path into a QR code.
+
+Only the asset owner can manage and preview it. Players can download only assets
+from their owner's currently assigned playlist. Azure blobs are never public
+and no SAS links are exposed. Assets remain in the library when a playlist is
+deleted; an asset cannot be deleted while a playlist references it.
+
+Players download assets before playback and retain them for offline use.
+Reassignment removes obsolete local asset files on the next successful poll;
+reset, unpairing or credential revocation also clears them when observed.
+An offline player cannot immediately receive revocation, and already downloaded
+copies cannot be remotely retracted. **Update players before assigning asset
+entries:** older players support only external URLs.
 
 ### 3. Start automatically after reboot
 

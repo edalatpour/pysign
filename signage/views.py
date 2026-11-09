@@ -2,19 +2,94 @@ import logging
 import uuid
 from datetime import timedelta
 
+from django.conf import settings
 from django.contrib import messages
+from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required
-from django.db import IntegrityError, transaction
-from django.db.models import Count, Max, Q, RestrictedError
+from django.db import DatabaseError, IntegrityError, transaction
+from django.db.models import Count, Max, Q, ProtectedError, RestrictedError, Sum
+from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_http_methods, require_POST
 
-from .forms import ClaimForm, DeviceForm, PlaylistForm, SlideForm
-from .models import Device, PlayerReset, PlayerRestart, Playlist, Slide
+from .assets import content_response, delete_content, document_page, save_content
+from .forms import AssetForm, ClaimForm, DeviceForm, PlaylistForm, SlideForm
+from .models import Asset, Device, PlayerReset, PlayerRestart, Playlist, Slide
 from .security import allow_request
 
 logger = logging.getLogger(__name__)
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def assets(request):
+    form = AssetForm(request.POST if request.method == "POST" else None, request.FILES or None)
+    if request.method == "POST" and form.is_valid():
+        asset = Asset(
+            owner=request.user, name=form.cleaned_data["name"], content_type=form.content_type,
+            size=form.size, sha256=form.sha256, page_count=form.page_count,
+        )
+        with transaction.atomic():
+            get_user_model().objects.select_for_update().get(pk=request.user.pk)
+            used = request.user.assets.aggregate(total=Sum("size"))["total"] or 0
+            if used + asset.size > settings.ASSET_QUOTA_BYTES:
+                form.add_error("file", "Your asset storage quota would be exceeded. Delete unused assets first.")
+            else:
+                save_content(asset, form.cleaned_data["file"])
+                try:
+                    asset.save(force_insert=True)
+                except DatabaseError:
+                    # Remove the blob if the database write fails.
+                    delete_content(asset)
+                    raise
+                messages.success(request, "Asset uploaded. You can reuse it in any of your playlists.")
+                return redirect("assets")
+    return render(request, "signage/assets.html", {
+        "form": form, "assets": request.user.assets.annotate(uses=Count("slides")),
+        "used": request.user.assets.aggregate(total=Sum("size"))["total"] or 0,
+        "quota": settings.ASSET_QUOTA_BYTES, "maximum": settings.ASSET_MAX_BYTES,
+    })
+
+
+@login_required
+@require_http_methods(["GET", "HEAD"])
+def asset_content(request, asset_id):
+    asset = get_object_or_404(Asset, pk=asset_id, owner=request.user)
+    return content_response(request, asset)
+
+
+@login_required
+@require_http_methods(["GET"])
+def asset_preview(request, asset_id, page=1, image=False):
+    asset = get_object_or_404(Asset, pk=asset_id, owner=request.user)
+    if not 1 <= page <= asset.page_count:
+        raise Http404
+    if image:
+        return document_page(asset, page)
+    response = render(request, "signage/asset_preview.html", {
+        "asset": asset, "page": page, "previous": page - 1, "next": page + 1,
+    })
+    response["Cache-Control"] = "private, no-store"
+    return response
+
+
+@login_required
+@require_POST
+def remove_asset(request, asset_id):
+    with transaction.atomic():
+        asset = get_object_or_404(Asset.objects.select_for_update(), pk=asset_id, owner=request.user)
+        if request.POST.get("confirm") != "on":
+            messages.error(request, "Confirm permanent deletion of this asset.")
+        else:
+            try:
+                Asset.objects.filter(pk=asset.pk).delete()
+            except ProtectedError:
+                messages.error(request, "Remove this asset from all playlists before deleting it.")
+            else:
+                delete_content(asset)
+                messages.success(request, "Asset deleted.")
+    return redirect("assets")
 
 
 @require_http_methods(["GET"])
@@ -152,7 +227,7 @@ def create_playlist(request, device_id=None):
                 raise
             form.add_error("name", "You already have a playlist with this name.")
         else:
-            messages.success(request, "Playlist created. Add its first URL below.")
+            messages.success(request, "Playlist created. Add a URL or asset below.")
             return redirect("playlist", playlist_id=playlist.pk)
     return render(request, "signage/playlist_new.html", {"form": form, "device": device})
 
@@ -177,7 +252,8 @@ def playlist_detail(request, playlist_id):
             return redirect("playlist", playlist_id=playlist.pk)
     next_position = (playlist.slides.aggregate(value=Max("position"))["value"] or 0) + 1
     return render(request, "signage/playlist.html", {
-        "playlist": playlist, "form": form, "slide_form": SlideForm(initial={"position": next_position}),
+        "playlist": playlist, "form": form,
+        "slide_form": SlideForm(initial={"position": next_position}, owner=request.user),
     })
 
 
@@ -203,7 +279,7 @@ def remove_playlist(request, playlist_id):
 def edit_slide(request, playlist_id, slide_id=None):
     playlist = get_object_or_404(Playlist, pk=playlist_id, owner=request.user)
     slide = get_object_or_404(Slide, pk=slide_id, playlist=playlist) if slide_id else None
-    form = SlideForm(request.POST if request.method == "POST" else None, instance=slide)
+    form = SlideForm(request.POST if request.method == "POST" else None, instance=slide, owner=request.user)
     if request.method == "POST" and form.is_valid():
         slide = form.save(commit=False)
         slide.playlist = playlist
@@ -218,5 +294,5 @@ def edit_slide(request, playlist_id, slide_id=None):
 def remove_slide(request, playlist_id, slide_id):
     playlist = get_object_or_404(Playlist, pk=playlist_id, owner=request.user)
     get_object_or_404(Slide, pk=slide_id, playlist=playlist).delete()
-    messages.success(request, "URL removed.")
+    messages.success(request, "Playlist entry removed.")
     return redirect("playlist", playlist_id=playlist.pk)

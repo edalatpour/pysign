@@ -1,0 +1,12 @@
+{% extends "signage/base.html" %}
+{% block title %}{{ asset.name }} - PiSign{% endblock %}
+{% block content %}
+<a href="{% url 'assets' %}">&larr; Asset library</a>
+<h1>{{ asset.name }}</h1>
+<p>Page {{ page }} of {{ asset.page_count }}. Check the rendered result before adding it to a playlist.</p>
+<p>
+  {% if previous %}<a href="{% url 'asset-preview' asset.pk previous %}">Previous page</a>{% endif %}
+  {% if next <= asset.page_count %}<a href="{% url 'asset-preview' asset.pk next %}">Next page</a>{% endif %}
+</p>
+<img style="max-width:100%;height:auto" src="{% url 'asset-page' asset.pk page %}" alt="Page {{ page }} of {{ asset.name }}">
+{% endblock %}

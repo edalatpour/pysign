@@ -1,5 +1,6 @@
 function (logo) {
-    if (window !== window.top || !["http:", "https:"].includes(location.protocol)) {
+    if (window !== window.top || (!["http:", "https:"].includes(location.protocol)
+        && !(location.protocol === "file:" && globalThis.__pisignAllowLocalAsset))) {
         return;
     }
     if (globalThis.__pisignWatermarkInstalled) {

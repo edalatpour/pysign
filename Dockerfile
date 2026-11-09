@@ -2,7 +2,8 @@
 FROM python:3.13-slim-bookworm
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl \
+    && apt-get install -y --no-install-recommends ca-certificates curl ffmpeg \
+       libreoffice-writer libreoffice-impress poppler-utils libseccomp2 fonts-dejavu-core \
     && curl --fail --silent --show-error --location \
        https://packages.microsoft.com/config/debian/12/packages-microsoft-prod.deb \
        --output /tmp/packages-microsoft-prod.deb \
@@ -33,4 +34,4 @@ RUN --mount=type=secret,id=pip_config,target=/etc/pip.conf,required=true \
 
 USER pisign
 EXPOSE 8000
-CMD ["gunicorn", "pisign.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "2", "--access-logfile", "-", "--error-logfile", "-", "--access-logformat", "%(h)s %(m)s %(U)s %(s)s %(L)s"]
+CMD ["gunicorn", "pisign.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "2", "--threads", "4", "--timeout", "240", "--access-logfile", "-", "--error-logfile", "-", "--access-logformat", "%(h)s %(m)s %(U)s %(s)s %(L)s"]

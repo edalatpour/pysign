@@ -2,7 +2,7 @@
 {% block content %}
 <section class="card narrow">
   <a class="text-link" href="{% url 'playlist' playlist.pk %}">&larr; {{ playlist.name }}</a>
-  <h1>Playlist URL</h1>
-  <form method="post">{% csrf_token %}{{ form.as_p }}<button>Save URL</button></form>
+  <h1>Playlist content</h1>
+  <form method="post">{% csrf_token %}{{ form.as_p }}<button>Save content</button></form>
 </section>
 {% endblock %}

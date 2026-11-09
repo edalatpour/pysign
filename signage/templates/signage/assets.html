@@ -1,0 +1,42 @@
+{% extends "signage/base.html" %}
+{% block title %}Assets - PiSign{% endblock %}
+{% block content %}
+<div class="page-heading">
+  <div><p class="eyebrow">MY WORKSPACE</p><h1>Assets</h1>
+    <p class="muted">Private images, videos and documents. Upload once and reuse across your playlists.</p>
+    <p class="muted">{{ used|filesizeformat }} of {{ quota|filesizeformat }} used. Maximum upload: {{ maximum|filesizeformat }}.</p>
+  </div>
+</div>
+<div class="columns">
+  <section class="card">
+    <h2>Your library</h2>
+    {% for asset in assets %}
+      <article class="slide">
+        <div><h3>{{ asset.name }}</h3>
+          <p class="muted">{{ asset.size|filesizeformat }} / {{ asset.uses }} playlist entries{% if asset.page_count %} / {{ asset.page_count }} pages{% endif %}</p>
+          {% if asset.page_count %}
+            <a href="{% url 'asset-preview' asset.pk 1 %}">Preview document</a> /
+            <a href="{% url 'asset-content' asset.pk %}" download>Download rendered pages</a>
+          {% elif asset.is_video %}
+            <video controls preload="none" style="max-width:100%;max-height:240px" src="{% url 'asset-content' asset.pk %}"></video>
+          {% else %}
+            <img loading="lazy" style="max-width:100%;max-height:240px" src="{% url 'asset-content' asset.pk %}" alt="{{ asset.name }}">
+          {% endif %}
+        </div>
+        <form method="post" action="{% url 'remove-asset' asset.pk %}">{% csrf_token %}
+          <p><label><input type="checkbox" name="confirm" required> Permanently delete</label></p>
+          <button class="quiet danger">Delete asset</button>
+        </form>
+      </article>
+    {% empty %}
+      <p class="muted">No assets yet. Upload your first file to get started.</p>
+    {% endfor %}
+  </section>
+  <aside class="card">
+    <h2>Upload an asset</h2>
+    <form method="post" enctype="multipart/form-data">{% csrf_token %}{{ form.as_p }}<button>Upload asset</button></form>
+    <p class="muted">Documents are converted into page images. Original documents are not retained. Check the rendered result before displaying it; fonts, animations and complex layouts may differ.</p>
+    <p class="muted">Assets in use cannot be deleted. Deleting a playlist does not delete its assets.</p>
+  </aside>
+</div>
+{% endblock %}

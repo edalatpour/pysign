@@ -5,6 +5,9 @@ import tempfile
 import threading
 import time
 import unittest
+import base64
+import shutil
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
@@ -62,7 +65,9 @@ class WatermarkIntegrationTests(unittest.TestCase):
         popen = subprocess.Popen
 
         def headless(arguments, **kwargs):
-            return popen([*arguments, "--headless=new", "--window-size=1280,720"], **kwargs)
+            if arguments[0] == self.browser.executable:
+                arguments = [*arguments, "--headless=new", "--window-size=1280,720"]
+            return popen(arguments, **kwargs)
 
         self.patcher = patch("player.browser.subprocess.Popen", side_effect=headless)
         self.patcher.start()
@@ -97,6 +102,42 @@ class WatermarkIntegrationTests(unittest.TestCase):
         self.browser.navigate(self.origin + path)
         self.wait_for("document.readyState === 'complete' && !!document.getElementById('pisign-watermark')")
         self.wait_for("document.getElementById('pisign-watermark').dataset.qrUrl === location.href")
+
+    def test_private_image_and_document_pages_render_locally_without_implicit_qr(self):
+        identifier = str(uuid.uuid4())
+        directory = self.browser.state_dir / "assets" / identifier
+        directory.mkdir(parents=True)
+        png = base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a0uUAAAAASUVORK5CYII="
+        )
+        (directory / "content").write_bytes(png)
+        asset = {"id": identifier, "content_type": "image/png", "page_count": 0}
+        self.browser.navigate_asset(asset, 1)
+        self.wait_for("document.querySelector('img')?.naturalWidth === 1")
+        self.wait_for("!!document.getElementById('pisign-watermark')")
+        self.assertIsNone(self.evaluate("document.getElementById('pisign-watermark').dataset.qrUrl"))
+        for number in (1, 2):
+            (directory / f"page-{number}.png").write_bytes(png)
+        self.browser.navigate_asset(
+            {**asset, "content_type": "application/zip", "page_count": 2},
+            1, show_qr=True, qr_url="https://example.com/public",
+        )
+        self.wait_for("document.getElementById('page')?.src.endsWith('/page-1.png')")
+        self.wait_for("document.getElementById('page')?.src.endsWith('/page-2.png')")
+        self.wait_for("document.getElementById('pisign-watermark')?.dataset.qrUrl === 'https://example.com/public'")
+
+    @unittest.skipUnless(shutil.which("ffmpeg"), "Video integration requires FFmpeg.")
+    def test_private_video_autoplays_from_the_downloaded_file(self):
+        identifier = str(uuid.uuid4())
+        directory = self.browser.state_dir / "assets" / identifier
+        directory.mkdir(parents=True)
+        subprocess.run([
+            "ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=red:s=64x48:d=1",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-f", "mp4", str(directory / "content"),
+        ], check=True)
+        self.browser.navigate_asset({"id": identifier, "content_type": "video/mp4", "page_count": 0}, 5)
+        self.wait_for("document.querySelector('video')?.videoWidth === 64 && !document.querySelector('video').paused")
+        self.wait_for("!!document.getElementById('pisign-watermark')")
 
     def svg_nodes(self):
         self.browser._command("DOM.enable", {})

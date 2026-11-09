@@ -11,5 +11,6 @@
 build
 dist
 staticfiles
+private-assets
 deploy
 .github
