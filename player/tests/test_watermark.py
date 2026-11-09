@@ -204,6 +204,59 @@ class WatermarkIntegrationTests(unittest.TestCase):
         self.open_content("/content?value=" + "a" * 500)
         self.assert_qr(url)
 
+    def test_disabled_qr_keeps_logo_across_redirect_reload_and_history(self):
+        with patch("segno.make") as make:
+            self.browser.navigate(self.origin + "/redirect", show_qr=False)
+            self.wait_for("document.readyState === 'complete' && !!document.getElementById('pisign-watermark')")
+            self.assertEqual(len(self.svg_nodes()), 1)
+            self.assertIsNone(self.evaluate("document.getElementById('pisign-watermark').dataset.qrUrl"))
+            self.evaluate("window.__beforeReload = true")
+            self.browser._command("Page.reload", {})
+            self.wait_for(
+                "!window.__beforeReload && document.readyState === 'complete' "
+                "&& !!document.getElementById('pisign-watermark')"
+            )
+            self.evaluate("history.pushState({}, '', '/content#disabled')")
+            self.browser.qr_checked_at = 0
+            self.browser.update_watermark()
+            self.assertEqual(len(self.svg_nodes()), 1)
+            make.assert_not_called()
+        self.browser.navigate(self.origin + "/content#enabled", show_qr=True)
+        self.assert_qr(self.origin + "/content#enabled")
+        with patch("segno.make") as make:
+            self.browser.navigate(self.origin + "/content#disabled", show_qr=False)
+            self.wait_for("!document.getElementById('pisign-watermark').dataset.qrUrl")
+            self.assertEqual(len(self.svg_nodes()), 1)
+            make.assert_not_called()
+
+    def test_custom_qr_destination_is_independent_of_page_navigation(self):
+        target = "https://example.org/scan?source=display#info"
+        self.browser.navigate(self.origin + "/redirect", qr_url=target)
+        self.wait_for("document.readyState === 'complete' && !!document.getElementById('pisign-watermark')")
+        self.assertEqual(self.evaluate("location.href"), self.origin + "/content")
+        self.assert_qr(target)
+        self.evaluate("history.pushState({}, '', '/content#next')")
+        self.browser.qr_checked_at = 0
+        self.browser.update_watermark()
+        self.assert_qr(target)
+        self.evaluate("window.__beforeReload = true")
+        self.browser._command("Page.reload", {})
+        self.wait_for(
+            "!window.__beforeReload && document.readyState === 'complete' "
+            "&& !!document.getElementById('pisign-watermark')"
+        )
+        self.assert_qr(target)
+        replacement = "https://example.org/replacement"
+        self.browser.navigate(self.origin + "/content#next", qr_url=replacement)
+        self.assert_qr(replacement)
+        with patch("segno.make") as make:
+            self.browser.navigate(self.origin + "/content#next", show_qr=False, qr_url=replacement)
+            self.wait_for("!document.getElementById('pisign-watermark').dataset.qrUrl")
+            self.assertEqual(len(self.svg_nodes()), 1)
+            make.assert_not_called()
+        self.browser.navigate(self.origin + "/content#next")
+        self.assert_qr(self.origin + "/content#next")
+
     def test_removal_body_replacement_and_fullscreen_container(self):
         self.open_content()
         self.evaluate("document.getElementById('pisign-watermark').remove()")

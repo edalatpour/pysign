@@ -42,6 +42,82 @@ class PlatformTests(TestCase):
         self.assertEqual(response.context["slide_form"]["duration"].value(), 3600)
         self.assertEqual(Slide().duration, 3600)
 
+    def test_qr_checkbox_defaults_to_checked_on_add_and_edit(self):
+        self.assertTrue(Slide().show_qr)
+        for url, form_name in [
+            (self.device_url(), "slide_form"),
+            (self.device_url("add-slide"), "form"),
+            (self.device_url("edit-slide", slide_id=self.slide.pk), "form"),
+        ]:
+            with self.subTest(url=url):
+                response = self.client.get(url)
+                self.assertTrue(response.context[form_name]["show_qr"].value())
+                self.assertContains(response, "Show QR code")
+                self.assertIn('checked', str(response.context[form_name]["show_qr"]))
+
+    def test_qr_checkbox_persists_and_is_sent_per_url(self):
+        data = {
+            "title": "No QR", "url": "https://example.com/private",
+            "duration": 30, "position": 1,
+        }
+        self.assertEqual(self.client.post(self.device_url("add-slide"), data).status_code, 302)
+        added = self.device.slides.get(title="No QR")
+        self.assertFalse(added.show_qr)
+        url = self.device_url("edit-slide", slide_id=self.slide.pk)
+        self.assertEqual(self.client.post(url, data).status_code, 302)
+        self.slide.refresh_from_db()
+        self.assertFalse(self.slide.show_qr)
+        response = self.client.get(url)
+        self.assertFalse(response.context["form"]["show_qr"].value())
+        self.assertNotIn("checked", str(response.context["form"]["show_qr"]))
+        self.assertEqual(self.client.post(url, {**data, "show_qr": "on"}).status_code, 302)
+        self.slide.refresh_from_db()
+        self.assertTrue(self.slide.show_qr)
+        response = self.client.get(reverse("api-config"), HTTP_AUTHORIZATION=f"Bearer {self.token}")
+        self.assertEqual([slide["show_qr"] for slide in response.json()["slides"]], [True, False])
+
+    def test_custom_qr_url_is_optional_saved_and_can_be_cleared(self):
+        response = self.client.get(self.device_url())
+        self.assertEqual(response.context["slide_form"]["qr_url"].value(), "")
+        self.assertContains(response, "QR code URL")
+        self.assertContains(response, "Leave blank to use the current page URL")
+        target = "https://example.org/scan?source=display#info"
+        data = {
+            "title": "Custom QR", "url": "https://example.com/content",
+            "duration": 30, "position": 1, "show_qr": "on", "qr_url": target,
+        }
+        self.assertEqual(self.client.post(self.device_url("add-slide"), data).status_code, 302)
+        slide = self.device.slides.get(title="Custom QR")
+        self.assertEqual(slide.url, data["url"])
+        self.assertEqual(slide.qr_url, target)
+        url = self.device_url("edit-slide", slide_id=slide.pk)
+        self.assertEqual(self.client.get(url).context["form"]["qr_url"].value(), target)
+        response = self.client.get(reverse("api-config"), HTTP_AUTHORIZATION=f"Bearer {self.token}")
+        self.assertEqual(response.json()["slides"][1]["qr_url"], target)
+        self.assertEqual(response.json()["slides"][0]["qr_url"], "")
+        disabled = {key: value for key, value in data.items() if key != "show_qr"}
+        self.assertEqual(self.client.post(url, disabled).status_code, 302)
+        slide.refresh_from_db()
+        self.assertFalse(slide.show_qr)
+        self.assertEqual(slide.qr_url, target)
+        self.assertEqual(self.client.post(url, {**data, "qr_url": ""}).status_code, 302)
+        slide.refresh_from_db()
+        self.assertEqual(slide.qr_url, "")
+
+    def test_custom_qr_url_validation(self):
+        for target in [
+            "javascript:alert(1)", "file:///tmp/content", "not-a-url",
+            "https://user:password@example.com/", "https://example.com/" + "a" * 2048,
+        ]:
+            with self.subTest(target=target):
+                response = self.client.post(self.device_url("add-slide"), {
+                    "title": "Bad QR", "url": "https://example.com/content",
+                    "duration": 30, "position": 1, "qr_url": target,
+                })
+                self.assertEqual(response.status_code, 200)
+                self.assertIn("qr_url", response.context["form"].errors)
+        self.assertEqual(self.device.slides.count(), 1)
+
     def test_dashboard_includes_brand_and_app_icons(self):
         response = self.client.get(reverse("dashboard"))
         self.assertContains(response, 'aria-label="PiSign home"')
@@ -98,7 +174,7 @@ class PlatformTests(TestCase):
         slides = response.json()["slides"]
         self.assertEqual([slide["title"] for slide in slides], ["Scores", "Scores first", "Calendar"])
         self.assertEqual([slide["duration"] for slide in slides], [5, 10, 5])
-        self.assertEqual(set(slides[0]), {"title", "url", "duration"})
+        self.assertEqual(set(slides[0]), {"title", "url", "duration", "show_qr", "qr_url"})
         self.assertEqual(response["Cache-Control"], "no-store")
         self.device.refresh_from_db()
         self.assertTrue(self.device.online)

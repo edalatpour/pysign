@@ -91,19 +91,28 @@ def validate_config(data):
         if not isinstance(slide, dict):
             raise ValueError("Each slide must be an object.")
         url, duration, title = slide.get("url"), slide.get("duration"), slide.get("title")
-        if not isinstance(url, str) or len(url) > 2048:
-            raise ValueError("Invalid slide URL.")
-        parsed = urlsplit(url)
-        if (
-            parsed.scheme not in ("http", "https") or not parsed.hostname
-            or parsed.username is not None or parsed.password is not None
-        ):
-            raise ValueError("Slides must use HTTP(S) URLs without embedded credentials.")
+        qr_url = slide.get("qr_url", "")
+        for label, value in (("slide", url), ("QR code", qr_url)):
+            if not isinstance(value, str) or len(value) > 2048:
+                raise ValueError(f"Invalid {label} URL.")
+            if label == "QR code" and value == "":
+                continue
+            parsed = urlsplit(value)
+            if (
+                parsed.scheme not in ("http", "https") or not parsed.hostname
+                or parsed.username is not None or parsed.password is not None
+            ):
+                raise ValueError(f"{label.capitalize()} URLs must use HTTP(S) without embedded credentials.")
         if type(duration) is not int or not 1 <= duration <= 86400:
             raise ValueError("Slide duration must be 1 to 86400 seconds.")
         if not isinstance(title, str) or len(title) > 100:
             raise ValueError("Invalid slide title.")
-        validated.append({"title": title, "url": url, "duration": duration})
+        show_qr = slide.get("show_qr", True)
+        if type(show_qr) is not bool:
+            raise ValueError("Slide show_qr must be a boolean.")
+        validated.append({
+            "title": title, "url": url, "duration": duration, "show_qr": show_qr, "qr_url": qr_url,
+        })
     if data["state"] == "unpaired" and validated:
         raise ValueError("An unpaired device cannot have a playlist.")
     config = {"state": data["state"], "slides": validated}

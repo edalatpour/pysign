@@ -134,6 +134,10 @@ For example, rotate a club scoreboard and calendar for 30 seconds each. Duration
 can range from 1 to 86,400 seconds; new entries default to 3,600 seconds, so set
 them explicitly for a short loop. Changes arrive on the next successful poll;
 slow browser operations can add a delay.
+Each URL's **Show QR code** checkbox is checked by default. Uncheck it and save
+to omit QR generation and display for that URL; the PiSign logo remains visible.
+The optional **QR code URL** can point somewhere different from the displayed
+page. Leave it blank to use the current page URL, including redirects.
 
 ### 3. Start automatically after reboot
 
@@ -213,7 +217,8 @@ PiSign displays actual web pages, not iframe embeds. Kiosk mode does not bypass
 site logins, cookie consent, CAPTCHAs, or access restrictions. Complex pages and
 video may exceed a Zero 2 W's resources, and page transitions are not guaranteed
 to be seamless. A PiSign logo and locally generated QR code overlay the content;
-the QR points to the current page URL.
+the QR points to the current page URL by default, or the entry's custom QR code
+URL when provided, unless QR display is disabled for that playlist entry.
 
 Use HTTPS, keep the OS and Chromium patched, and retain the browser sandbox.
 Place players on a dedicated signage network: a playlist can point to any HTTP(S)

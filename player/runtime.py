@@ -27,7 +27,7 @@ class Rotation:
         self.index = (self.index + 1) % len(self.slides)
         slide = self.slides[self.index]
         self.deadline = now + slide["duration"]
-        return slide["url"]
+        return slide
 
 
 def cached_config(state_dir, server):
@@ -86,9 +86,12 @@ def run_player(browser, worker, state_dir, server):
                         "Your display is paired.\nAdd URLs in your PiSign workspace.",
                     )
                 else:
-                    url = rotation.due(time.monotonic())
-                    if url:
-                        browser.navigate(url)
+                    slide = rotation.due(time.monotonic())
+                    if slide:
+                        browser.navigate(
+                            slide["url"], show_qr=slide.get("show_qr", True),
+                            qr_url=slide.get("qr_url", ""),
+                        )
                     try:
                         browser.update_watermark()
                     except BrowserTimeout as exc:

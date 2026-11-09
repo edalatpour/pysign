@@ -79,7 +79,7 @@ def config(request):
         return JsonResponse({"state": "unpaired", "slides": []})
     result = {
         "state": "paired", "name": device.name,
-        "slides": list(device.slides.values("title", "url", "duration")),
+        "slides": list(device.slides.values("title", "url", "duration", "show_qr", "qr_url")),
     }
     reset = PlayerReset.objects.filter(
         device=device, completed_at__isnull=True, expires_at__gt=timezone.now(),
