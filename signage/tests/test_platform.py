@@ -37,6 +37,16 @@ class PlatformTests(TestCase):
         self.assertContains(response, "Scoreboard")
         self.assertNotContains(response, self.other_device.name)
 
+    def test_dashboard_cards_omit_decorative_screen(self):
+        response = self.client.get(reverse("dashboard"))
+        self.assertNotContains(response, "screen-icon")
+        self.assertNotContains(response, "WEB /")
+        self.assertContains(response, self.device.name)
+        self.assertContains(response, "Offline")
+        self.assertContains(response, "Last seen:")
+        self.assertContains(response, f'href="{self.device_url()}"')
+        self.assertContains(response, "Manage display")
+
     def test_new_url_defaults_to_one_hour(self):
         response = self.client.get(self.device_url())
         self.assertEqual(response.context["slide_form"]["duration"].value(), 3600)

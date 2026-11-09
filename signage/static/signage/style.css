@@ -25,7 +25,6 @@ details.card > summary { cursor: pointer; font-weight: 650; }
 details.card[open] > summary { margin-bottom: 18px; }
 .display { color: var(--ink); transition: border-color .2s; }
 .display:hover { border-color: var(--accent); text-decoration: none; }
-.screen-icon { height: 130px; display: grid; place-items: center; border-radius: 9px; background: #e7f0eb; color: #468477; font: 12px monospace; letter-spacing: 3px; margin-bottom: 20px; border: 8px solid #d6e5dc; }
 .badge { display: inline-block; font-size: 11px; padding: 3px 10px; background: #eff1ef; border-radius: 30px; color: var(--muted); }
 .online { color: #176f60; background: #e5f3e8; }
 .text-link { font-size: 14px; font-weight: 650; }
