@@ -190,7 +190,7 @@ class BrowserWatermarkTests(unittest.TestCase):
             expression = command.call_args.args[1]["expression"]
             self.assertIn(json.dumps(url), expression)
             self.assertEqual(command.call_args.args[1]["contextId"], 7)
-        self.assertEqual(self.browser.qr_location, (7, url))
+        self.assertEqual(self.browser.qr_location, (7, url, True, url))
         self.browser.qr_checked_at = 0
         with patch.object(self.browser, "_command", side_effect=self.qr_responses(url)[:3]) as command:
             self.browser.update_watermark()
@@ -206,14 +206,63 @@ class BrowserWatermarkTests(unittest.TestCase):
                 self.browser.update_watermark()
                 command.assert_called_once_with("Page.getFrameTree", {})
 
+    def test_custom_qr_url_generates_target_and_invalidates_cache_on_target_change(self):
+        self.browser.socket = Mock()
+        self.browser.process = Mock()
+        self.browser.process.poll.return_value = None
+        page = "https://example.com/content"
+        for target in ["https://example.org/scan", "https://example.org/other", ""]:
+            with self.subTest(target=target):
+                with patch.object(self.browser, "_command"):
+                    self.browser.navigate(page, qr_url=target)
+                expected = target or page
+                with patch("segno.make", return_value=Mock(matrix=[[1]])) as make:
+                    with patch.object(self.browser, "_command", side_effect=self.qr_responses(page)) as command:
+                        self.browser.update_watermark()
+                        make.assert_called_once_with(
+                            expected, error="m", micro=False, encoding="utf-8", eci=True,
+                            boost_error=False,
+                        )
+                        self.assertIn(
+                            f"__pisignUpdateQr({json.dumps(page)}, [[1]], {json.dumps(expected)})",
+                            command.call_args.args[1]["expression"],
+                        )
+                self.assertEqual(self.browser.qr_location, (7, page, True, expected))
+
     def test_qr_overflow_is_logged_and_hidden(self):
         self.browser.socket = Mock()
         url = "https://example.com/?value=" + "a" * 4000
         with patch.object(self.browser, "_command", side_effect=self.qr_responses(url)) as command:
             with self.assertLogs("player.browser", level="WARNING"):
                 self.browser.update_watermark()
-            self.assertIn(", null)", command.call_args.args[1]["expression"])
-        self.assertEqual(self.browser.qr_location, (7, url))
+            self.assertIn(", null,", command.call_args.args[1]["expression"])
+        self.assertEqual(self.browser.qr_location, (7, url, True, url))
+
+    def test_disabled_qr_clears_existing_code_without_generating_and_can_be_reenabled(self):
+        self.browser.socket = Mock()
+        self.browser.process = Mock()
+        self.browser.process.poll.return_value = None
+        url = "https://example.com"
+        self.browser.qr_location = (7, url, True, url)
+        with patch.object(self.browser, "_command") as command:
+            self.browser.navigate(url, show_qr=False)
+            command.assert_called_once_with("Page.navigate", {"url": url}, timeout=30)
+        with patch("segno.make") as make:
+            with patch.object(self.browser, "_command", side_effect=self.qr_responses(url)) as command:
+                self.browser.update_watermark()
+                self.assertIn(", null,", command.call_args.args[1]["expression"])
+            make.assert_not_called()
+        self.assertEqual(self.browser.qr_location, (7, url, False, url))
+        self.browser.qr_checked_at = 0
+        with patch.object(self.browser, "_command", side_effect=self.qr_responses(url)[:3]) as command:
+            self.browser.update_watermark()
+            self.assertEqual(command.call_count, 3)
+        with patch.object(self.browser, "_command"):
+            self.browser.navigate(url)
+        with patch.object(self.browser, "_command", side_effect=self.qr_responses(url)) as command:
+            self.browser.update_watermark()
+            self.assertNotIn(", null,", command.call_args.args[1]["expression"])
+        self.assertEqual(self.browser.qr_location, (7, url, True, url))
 
     def test_qr_navigation_race_retries_and_errors_are_explicit(self):
         self.browser.socket = Mock()
@@ -265,7 +314,7 @@ class BrowserWatermarkTests(unittest.TestCase):
                 with patch("player.runtime.time.sleep", side_effect=[None, KeyboardInterrupt]):
                     with self.assertRaises(KeyboardInterrupt):
                         run_player(browser, worker, self.browser.state_dir, "https://pisign.example.com")
-        browser.navigate.assert_called_once_with("https://example.com")
+        browser.navigate.assert_called_once_with("https://example.com", show_qr=True, qr_url="")
         self.assertEqual(browser.update_watermark.call_count, 2)
         browser.close.assert_called_once()
 
@@ -294,3 +343,23 @@ class BrowserWatermarkTests(unittest.TestCase):
         browser.close.assert_called_once()
         self.assertTrue(all(call.args == (0.1,) for call in sleep.call_args_list))
         self.assertIn("Skipping this watermark refresh.", logs.output[0])
+
+    def test_running_player_applies_qr_setting_for_each_slide(self):
+        worker = Mock()
+        config = {"state": "paired", "slides": [
+            {"url": "https://example.com", "duration": 1, "show_qr": False, "qr_url": "https://example.org/"},
+            {"url": "https://example.com#next", "duration": 1, "show_qr": True, "qr_url": "https://example.org/scan"},
+        ]}
+        worker.updates.get_nowait.return_value = ("config", config)
+        browser = Mock()
+        browser.process.poll.return_value = None
+        with patch("player.runtime.cached_config", return_value=config):
+            with patch("player.runtime.time.monotonic", side_effect=[0, 1]):
+                with patch("player.runtime.time.sleep", side_effect=[None, KeyboardInterrupt]):
+                    with self.assertRaises(KeyboardInterrupt):
+                        run_player(browser, worker, self.browser.state_dir, "https://pisign.example.com")
+        self.assertEqual(
+            [(call.args, call.kwargs) for call in browser.navigate.call_args_list],
+            [(("https://example.com",), {"show_qr": False, "qr_url": "https://example.org/"}),
+             (("https://example.com#next",), {"show_qr": True, "qr_url": "https://example.org/scan"})],
+        )

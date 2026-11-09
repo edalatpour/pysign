@@ -484,11 +484,22 @@ third-party pages.
 
 URL content displays a click-through PiSign watermark: a 100 px-wide logo at 65%
 opacity centered above an opaque black-and-white QR code inside the same translucent dark
-backing, inset 16 px from the bottom-right corner. The QR opens the current page
+backing, inset 16 px from the bottom-right corner. By default, the QR opens the current page
 URL, including redirects, query strings, and fragments; in-page URL changes are
 checked once a second. It is generated locally, with a four-module white quiet
 zone and at least three pixels per module (longer URLs need a larger code).
 URLs exceeding QR capacity are logged and omit the QR, keeping the logo.
+Each playlist URL has a **Show QR code** checkbox in the add/edit form, checked
+by default (including existing URLs). Unchecking it and saving disables QR
+generation and display for that entry while keeping the logo. The setting syncs
+with the playlist and is retained in the offline cache. Update older players
+to support this setting; cached entries without `show_qr` default to `true`.
+The optional **QR code URL** field selects a different HTTP(S) destination without
+changing the displayed page. Leave it blank to use the current page URL as above.
+Custom QR destinations remain fixed across redirects and in-page navigation.
+They must not contain embedded credentials. The `qr_url` setting is saved and
+cached per entry; blank or missing values use the current page URL. Unchecking
+**Show QR code** suppresses generation even when a custom QR URL is saved.
 Scanning does not bypass authentication or private-network access requirements.
 It does not resize the page or intercept clicks, scrolling, or keyboard
 focus. The watermark is installed in Chromium's isolated script world on each

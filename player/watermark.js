@@ -59,7 +59,7 @@ function (logo) {
     shadow.append(svg);
 
     let qrSvg = null;
-    globalThis.__pisignUpdateQr = function (url, matrix) {
+    globalThis.__pisignUpdateQr = function (url, matrix, qrUrl = url) {
         // Navigation can finish between reading the URL and delivering its QR.
         if (url !== location.href) {
             return false;
@@ -95,7 +95,7 @@ function (logo) {
         qrSvg.style.setProperty("height", `${Math.max(100, size * 3)}px`);
         qrSvg.style.setProperty("flex-shrink", "0");
         shadow.append(qrSvg);
-        host.dataset.qrUrl = url;
+        host.dataset.qrUrl = qrUrl;
         return true;
     };
 

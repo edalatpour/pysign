@@ -19,8 +19,8 @@ from player.storage import private_directory, read_json, reset_state, write_json
 
 def playlist():
     return {"state": "paired", "name": "Lobby display", "slides": [
-        {"title": "Scoreboard", "url": "https://example.com/scores", "duration": 5},
-        {"title": "Calendar", "url": "https://example.com/calendar", "duration": 5},
+        {"title": "Scoreboard", "url": "https://example.com/scores", "duration": 5, "show_qr": True, "qr_url": ""},
+        {"title": "Calendar", "url": "https://example.com/calendar", "duration": 5, "show_qr": True, "qr_url": ""},
     ]}
 
 
@@ -29,11 +29,11 @@ class RotationTests(unittest.TestCase):
         rotation = Rotation()
         slides = playlist()["slides"]
         rotation.configure(slides)
-        self.assertEqual(rotation.due(0), slides[0]["url"])
+        self.assertEqual(rotation.due(0), slides[0])
         self.assertIsNone(rotation.due(4.999))
-        self.assertEqual(rotation.due(5), slides[1]["url"])
+        self.assertEqual(rotation.due(5), slides[1])
         self.assertIsNone(rotation.due(9.999))
-        self.assertEqual(rotation.due(10), slides[0]["url"])
+        self.assertEqual(rotation.due(10), slides[0])
 
     def test_variable_durations_and_playlist_updates(self):
         rotation = Rotation()
@@ -43,9 +43,9 @@ class RotationTests(unittest.TestCase):
         rotation.due(0)
         rotation.due(5)
         self.assertIsNone(rotation.due(21.999))
-        self.assertEqual(rotation.due(22), slides[0]["url"])
+        self.assertEqual(rotation.due(22), slides[0])
         rotation.configure([slides[1]])
-        self.assertEqual(rotation.due(23), slides[1]["url"])
+        self.assertEqual(rotation.due(23), slides[1])
         rotation.configure([])
         self.assertIsNone(rotation.due(100))
 
@@ -56,7 +56,16 @@ class RotationTests(unittest.TestCase):
         rotation.due(0)
         rotation.configure(playlist()["slides"])
         self.assertIsNone(rotation.due(4))
-        self.assertEqual(rotation.due(5), slides[1]["url"])
+        self.assertEqual(rotation.due(5), slides[1])
+
+    def test_qr_only_change_restarts_rotation_with_new_setting(self):
+        rotation = Rotation()
+        slides = playlist()["slides"]
+        rotation.configure(slides)
+        rotation.due(0)
+        changed = [{**slides[0], "show_qr": False}, slides[1]]
+        rotation.configure(changed)
+        self.assertEqual(rotation.due(1), changed[0])
 
 
 class PlayerTests(unittest.TestCase):
@@ -98,6 +107,49 @@ class PlayerTests(unittest.TestCase):
                 config["name"] = name
                 with self.assertRaisesRegex(ValueError, "Device name"):
                     validate_config(config)
+
+    def test_qr_setting_requires_a_boolean(self):
+        for value in [None, 0, 1, "", "false", [], {}]:
+            with self.subTest(value=value):
+                config = playlist()
+                config["slides"][0]["show_qr"] = value
+                with self.assertRaisesRegex(ValueError, "show_qr must be a boolean"):
+                    validate_config(config)
+
+    def test_legacy_qr_setting_defaults_to_true(self):
+        legacy = playlist()
+        for slide in legacy["slides"]:
+            del slide["show_qr"]
+            del slide["qr_url"]
+        self.assertEqual(validate_config(legacy), playlist())
+        write_json(self.state / "playlist.json", {"server": self.server, "config": legacy})
+        self.assertEqual(cached_config(self.state, self.server), playlist())
+
+    def test_disabled_qr_setting_survives_polling_and_offline_cache(self):
+        config = playlist()
+        config["slides"][0]["show_qr"] = False
+        config["slides"][0]["qr_url"] = "https://example.org/scan"
+        worker = ConfigWorker(self.server, self.state, "Pi")
+        write_json(self.state / "credentials.json", {"server": self.server, "token": "a" * 43})
+        worker.api = Mock()
+        worker.api.call.return_value = config
+        self.assertEqual(self.poll_once(worker), ("config", config))
+        self.assertEqual(cached_config(self.state, self.server), config)
+
+    def test_custom_qr_url_validation(self):
+        for value in [
+            None, 1, False, [], {}, "not-a-url", "javascript:alert(1)",
+            "file:///tmp", "https://user:password@example.com/",
+            "https://example.com/" + "a" * 2048,
+        ]:
+            with self.subTest(value=value):
+                config = playlist()
+                config["slides"][0]["qr_url"] = value
+                with self.assertRaises(ValueError):
+                    validate_config(config)
+        config = playlist()
+        config["slides"][0]["qr_url"] = "https://example.org/scan?source=display#info"
+        self.assertEqual(validate_config(config), config)
 
     def test_legacy_cached_config_without_name_is_still_valid(self):
         config = playlist()

@@ -41,6 +41,8 @@ class Slide(models.Model):
     device = models.ForeignKey(Device, on_delete=models.CASCADE, related_name="slides")
     title = models.CharField(max_length=100)
     url = models.URLField(max_length=2048, validators=[validate_display_url])
+    show_qr = models.BooleanField(default=True)
+    qr_url = models.URLField(max_length=2048, blank=True, default="", validators=[validate_display_url])
     duration = models.PositiveIntegerField(
         default=3600, validators=[MinValueValidator(1), MaxValueValidator(86400)],
     )
