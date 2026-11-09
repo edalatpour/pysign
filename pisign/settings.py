@@ -159,6 +159,23 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 USE_TZ = True
 TIME_ZONE = "UTC"
 DATA_UPLOAD_MAX_MEMORY_SIZE = 16384
+FILE_UPLOAD_MAX_MEMORY_SIZE = 0
+FILE_UPLOAD_HANDLERS = [
+    "signage.uploads.LimitedAssetUploadHandler",
+    "django.core.files.uploadhandler.TemporaryFileUploadHandler",
+]
+DATA_UPLOAD_MAX_NUMBER_FILES = 1
+ASSET_MAX_BYTES = int(os.environ.get("PISIGN_ASSET_MAX_BYTES", str(100 * 1024 * 1024)))
+ASSET_QUOTA_BYTES = int(os.environ.get("PISIGN_ASSET_QUOTA_BYTES", str(1024 * 1024 * 1024)))
+ASSET_STORAGE_ROOT = Path(os.environ.get("PISIGN_ASSET_STORAGE_ROOT", str(BASE_DIR / "private-assets")))
+ASSET_AZURE_ACCOUNT_URL = os.environ.get("PISIGN_ASSET_AZURE_ACCOUNT_URL", "")
+ASSET_AZURE_CONTAINER = os.environ.get("PISIGN_ASSET_AZURE_CONTAINER", "assets")
+ASSET_AZURE_CLIENT_ID = os.environ.get("PISIGN_ASSET_AZURE_CLIENT_ID", "")
+DOCUMENT_CONVERTER_URL = os.environ.get("PISIGN_DOCUMENT_CONVERTER_URL", "")
+if not 1 <= ASSET_MAX_BYTES <= 512 * 1024 * 1024 or ASSET_QUOTA_BYTES < ASSET_MAX_BYTES:
+    raise ImproperlyConfigured("Asset limits require 1 <= maximum <= 512 MiB and quota >= maximum.")
+if AZURE_CONTAINER_APPS and not ASSET_AZURE_ACCOUNT_URL:
+    raise ImproperlyConfigured("Set PISIGN_ASSET_AZURE_ACCOUNT_URL on Azure Container Apps.")
 SESSION_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SAMESITE = "Lax"
 SESSION_COOKIE_SECURE = not DEBUG

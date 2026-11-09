@@ -127,6 +127,72 @@ permits HTTP and uses a development-only session secret; never expose it publicl
 For testing on your LAN, explicitly set `PISIGN_ALLOWED_HOSTS` to include the server
 hostname/address and bind `runserver 0.0.0.0:8000`.
 
+### Private assets and document conversion
+
+The local server stores assets in `private-assets/`, outside static files and
+excluded from Git and Docker build contexts. There is deliberately no public
+media route. Set `PISIGN_ASSET_STORAGE_ROOT` to change this private filesystem
+location. Do not mount it into a public web server.
+
+Install FFmpeg (`ffprobe`) on the server to enable video uploads. On Debian/Ubuntu:
+
+```sh
+sudo apt install ffmpeg
+```
+
+Documents require the separate, Linux-only rasterizer. The production image
+includes LibreOffice Writer/Impress, Poppler, fonts and libseccomp. For local
+development, run that image as an **isolated container**, not alongside the
+admin process on the host:
+
+```sh
+docker run --rm --name pisign-documents \
+  -p 127.0.0.1:8080:8080 YOUR_PISIGN_IMAGE \
+  python -m signage.converter
+export PISIGN_DOCUMENT_CONVERTER_URL=http://127.0.0.1:8080
+```
+
+Use the Linux image built through the [deployment guide](../deploy/README.md).
+The converter receives no admin secrets, database configuration or storage
+credentials. Never give it the admin app's managed identity or private storage
+mount. Its HTTP endpoint is for trusted internal callers only and must not be
+exposed publicly. Conversion subprocesses additionally disable IP networking
+with seccomp, disable Office macros/link updates, use clean per-request profiles
+and apply memory/CPU/file-size limits and timeouts. Unsupported sandboxing fails
+conversion rather than running unrestricted. All request files are temporary.
+
+PDF, Word and PowerPoint uploads become a private ZIP containing only numbered
+PNG page images. Originals are discarded. Documents are limited to 50 pages,
+rendered with a maximum edge of 1920 pixels. Each playlist entry's duration
+applies to each document page; videos loop muted for the entry's duration.
+Use document previews to check rendering, especially when fonts differ.
+
+| Setting | Default / purpose |
+| --- | --- |
+| `PISIGN_ASSET_MAX_BYTES` | `104857600` (100 MiB), maximum upload and rendered asset size; maximum configurable value is 512 MiB. The document converter always caps input/output at 100 MiB. |
+| `PISIGN_ASSET_QUOTA_BYTES` | `1073741824` (1 GiB), stored bytes per account; must be at least the maximum upload size. |
+| `PISIGN_ASSET_AZURE_ACCOUNT_URL` | Blob account HTTPS endpoint; uses Azure instead of filesystem storage. Required in Container Apps. |
+| `PISIGN_ASSET_AZURE_CONTAINER` | `assets`; must already exist and deny public access. |
+| `PISIGN_ASSET_AZURE_CLIENT_ID` | User-assigned managed identity client ID for Blob access. |
+| `PISIGN_DOCUMENT_CONVERTER_URL` | Internal converter origin; document uploads show an explicit error if unset. |
+
+Azure uses managed identity, not storage keys or SAS URLs. The backend authorizes
+each owner preview/download and each player download, including range requests.
+A player must be paired, own the same account as the asset and playlist, and
+currently have that playlist assigned. Responses are marked `no-store`.
+
+The Pi's config worker downloads and SHA-256-checks assets into its private state
+directory, never passing the device credential to displayed pages. Downloads do
+not block rotation. Obsolete asset files are pruned on configuration changes;
+reset/unpair/revocation also clears them when observed. Offline playback and
+immediate remote revocation are mutually exclusive: already downloaded copies
+cannot be retracted, and an in-flight authorized download is not cancelled by
+a later server-side reassignment.
+
+Update players before adding asset playlist entries, then run migrations and
+redeploy the server. Old players only understand URL entries. Existing URL
+entries and their configuration response shape are unchanged.
+
 ### Updating an existing installation after the rename
 
 The application is now PiSign: the Python package is `pisign`, the player command

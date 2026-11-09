@@ -40,6 +40,12 @@ resource environment 'Microsoft.App/managedEnvironments@2025-01-01' existing = {
 resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
   name: '${prefix}-identity'
 }
+resource documentIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
+  name: '${prefix}-documents-identity'
+}
+resource assetStorage 'Microsoft.Storage/storageAccounts@2023-05-01' existing = {
+  name: 'ps${suffix}assets'
+}
 resource registry 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
   scope: resourceGroup(registryResourceGroup)
   name: registryName
@@ -92,6 +98,10 @@ var env = [
   { name: 'PISIGN_ENTRA_CLIENT_ID', value: entraClientId }
   { name: 'PISIGN_ENTRA_CLIENT_SECRET', secretRef: 'entra-client-secret' }
   { name: 'PISIGN_ENTRA_REDIRECT_URI', value: 'https://${hostname}/accounts/callback/' }
+  { name: 'PISIGN_ASSET_AZURE_ACCOUNT_URL', value: assetStorage.properties.primaryEndpoints.blob }
+  { name: 'PISIGN_ASSET_AZURE_CONTAINER', value: 'assets' }
+  { name: 'PISIGN_ASSET_AZURE_CLIENT_ID', value: identity.properties.clientId }
+  { name: 'PISIGN_DOCUMENT_CONVERTER_URL', value: 'https://${prefix}-documents.internal.${environment.properties.defaultDomain}' }
 ]
 var databaseEnv = databaseEngine == 'postgresql' ? [
   { name: 'PISIGN_POSTGRES_NAME', value: 'pisign' }
@@ -219,6 +229,49 @@ resource app 'Microsoft.App/containerApps@2025-01-01' = if (deployWeb) {
             name: 'http'
             http: { metadata: { concurrentRequests: '50' } }
           }
+        ]
+      }
+    }
+  }
+}
+
+resource documents 'Microsoft.App/containerApps@2025-01-01' = if (deployWeb) {
+  name: '${prefix}-documents'
+  tags: { 'pisign-managed': 'true' }
+  location: location
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: { '${documentIdentity.id}': {} }
+  }
+  properties: {
+    managedEnvironmentId: environment.id
+    workloadProfileName: empty(workloadProfileName) ? null : workloadProfileName
+    configuration: {
+      activeRevisionsMode: 'Single'
+      ingress: {
+        external: false
+        targetPort: 8080
+        transport: 'http'
+        allowInsecure: false
+      }
+      registries: [
+        { server: registry.properties.loginServer, identity: documentIdentity.id }
+      ]
+    }
+    template: {
+      containers: [
+        {
+          name: 'documents'
+          image: image
+          command: ['python', '-m', 'signage.converter']
+          resources: { cpu: json('1.0'), memory: '2Gi' }
+        }
+      ]
+      scale: {
+        minReplicas: 1
+        maxReplicas: 3
+        rules: [
+          { name: 'http', http: { metadata: { concurrentRequests: '1' } } }
         ]
       }
     }

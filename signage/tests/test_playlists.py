@@ -45,7 +45,7 @@ class PlaylistTests(TestCase):
         response = self.client.get(reverse("playlists"))
         self.assertContains(response, self.playlist.name)
         self.assertNotContains(response, self.other_playlist.name)
-        self.assertContains(response, "1 URL / 2 displays")
+        self.assertContains(response, "1 entry / 2 displays")
         self.assertContains(response, reverse("create-playlist"))
         response = self.client.get(reverse("dashboard"))
         self.assertContains(response, reverse("playlists"))

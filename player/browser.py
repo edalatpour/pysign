@@ -11,6 +11,7 @@ from urllib.request import ProxyHandler, build_opener
 from xml.etree import ElementTree
 
 from .storage import private_directory
+from .assets import CONTENT_TYPES
 
 
 logger = logging.getLogger(__name__)
@@ -153,29 +154,73 @@ class Browser:
         self.qr_url = qr_url
         self.qr_checked_at = 0
 
+    def navigate_asset(self, asset, duration, show_qr=False, qr_url=""):
+        directory = self.state_dir / "assets" / asset["id"]
+        content = directory / "content"
+        if not content.is_file() or any(
+            not (directory / f"page-{number}.png").is_file()
+            for number in range(1, asset["page_count"] + 1)
+        ):
+            logger.error("Cached asset %s is missing.", asset["id"])
+            self.status("Content unavailable", "Waiting for an asset download. Check the network connection.")
+            return False
+        kind = CONTENT_TYPES[asset["content_type"]]
+        if kind == "document":
+            pages = [(directory / f"page-{number}.png").as_uri() for number in range(1, asset["page_count"] + 1)]
+            element = (
+                '<img id="page" alt="">'
+                f'<script>const pages={json.dumps(pages)};let i=0;'
+                'const image=document.getElementById("page");image.src=pages[0];'
+                f'setInterval(()=>{{i=(i+1)%pages.length;image.src=pages[i];}},{duration * 1000});</script>'
+            )
+        elif kind == "video":
+            element = f'<video autoplay muted loop playsinline src="{content.as_uri()}"></video>'
+        else:
+            element = f'<img src="{content.as_uri()}" alt="">'
+        wrapper = directory / "display.html"
+        wrapper.write_text(
+            '<!doctype html><meta charset="utf-8"><title>PiSign asset</title>'
+            '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; '
+            'img-src file:; media-src file:; style-src \'unsafe-inline\'; script-src \'unsafe-inline\'">'
+            '<style>html,body{margin:0;width:100%;height:100%;background:#000;overflow:hidden}'
+            'img,video{width:100%;height:100%;object-fit:contain}</style>' + element,
+            encoding="utf-8",
+        )
+        wrapper.chmod(0o600)
+        self.navigate(wrapper.as_uri(), show_qr=show_qr, qr_url=qr_url)
+        return True
+
     def update_watermark(self):
         now = time.monotonic()
         if self.socket is None or now - self.qr_checked_at < 1:
             return
         self.qr_checked_at = now
         frame = self._command("Page.getFrameTree", {})["frameTree"]["frame"]
-        if not frame["url"].startswith(("http://", "https://")):
+        asset_page = frame["url"].startswith((self.state_dir / "assets").as_uri() + "/")
+        if not frame["url"].startswith(("http://", "https://")) and not asset_page:
             return
         context = self._command("Page.createIsolatedWorld", {
             "frameId": frame["id"], "worldName": "PiSign watermark",
         })["executionContextId"]
+        if asset_page:
+            result = self._command("Runtime.evaluate", {
+                "expression": f"globalThis.__pisignAllowLocalAsset = true;{watermark_script()}",
+                "contextId": context, "returnByValue": True,
+            })
+            if "exceptionDetails" in result:
+                raise BrowserError("Could not render the asset watermark.")
         result = self._command("Runtime.evaluate", {
             "expression": "location.href", "contextId": context, "returnByValue": True,
         })
         if "exceptionDetails" in result:
             raise BrowserError("Could not read the watermark content URL.")
         url = result["result"]["value"]
-        qr_url = self.qr_url or url
+        qr_url = self.qr_url or ("" if asset_page else url)
         location = (context, url, self.show_qr, qr_url)
         if self.qr_location == location:
             return
         matrix = None
-        if self.show_qr:
+        if self.show_qr and qr_url:
             import segno
 
             try:

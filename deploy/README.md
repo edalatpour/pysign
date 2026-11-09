@@ -29,6 +29,12 @@ have changed. These templates do not rename or migrate existing Azure resources.
 - The web app, with HTTPS ingress, one replica by default,
   startup/liveness/readiness probes, and single-revision rollout.
 - A manual migration job and a cleanup job scheduled for 03:00 UTC daily.
+- A private Blob Storage account/container with anonymous access and shared-key
+  authentication disabled. The admin identity gets Blob Data Contributor only
+  on the asset container; downloads go through PiSign authorization, not SAS links.
+- An internal-only document conversion app with a separate registry-pull-only
+  identity, no database/storage access or admin secrets, and network-restricted
+  conversion subprocesses. PDF, Word and PowerPoint become static page images.
 
 Resources incur Azure charges, including PostgreSQL when the app is idle.
 The initial database is deliberately small and not highly available. Review
@@ -55,7 +61,7 @@ not PostgreSQL authentication or consumer sign-in.
   scope). Have the required resource providers registered: `Microsoft.App`,
   `Microsoft.OperationalInsights`, `Microsoft.Network`,
   `Microsoft.DBforPostgreSQL`, `Microsoft.ContainerRegistry`, `Microsoft.KeyVault`,
-  and `Microsoft.ManagedIdentity`. Your deployment identity must also be allowed
+  `Microsoft.ManagedIdentity`, and `Microsoft.Storage`. Your deployment identity must also be allowed
   to manage Key Vault secrets under your organization's policy.
 - An existing Entra External ID external-tenant application, as described in the
   main README. Azure infrastructure provisioning does not create that application.
@@ -112,6 +118,21 @@ does it deploy the web app and scheduled cleanup job and check both health
 endpoints. A failed command, failed migration, or timeout stops the sequence.
 Inspect the migration execution before retrying after a timeout: it may still be
 running. Do not run deployments concurrently against the same environment.
+
+For an existing deployment, **run `azd up` to provision the new private storage,
+container-scoped role assignment, and converter identity before deploying this
+release**; `azd deploy` alone does not provision them. Update the Pi players before
+assigning asset entries. Existing URL playlists remain compatible.
+
+The runtime template sets the Blob endpoint, container and managed-identity
+client ID, plus the internal document converter URL. The converter has no public
+ingress. Account storage defaults to 1 GiB and uploads to 100 MiB; see the
+[asset settings](../docs/reference.md#private-assets-and-document-conversion)
+for formats, limits and local setup. Office/PDF conversion runs separately from
+the web app, has no admin/storage credentials, and requires Linux seccomp support.
+Use the supplied image (which includes LibreOffice, Poppler, FFmpeg and fonts).
+Back up private blobs along with the database; database backups do not contain
+asset bytes. Document originals are not retained, only their rendered pages.
 
 The subscription-scoped `main.bicep` wrapper reuses `infra.bicep` and creates
 `rg-pisign` for the environment named `pisign`, using the `pisign` resource prefix.

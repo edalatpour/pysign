@@ -684,7 +684,7 @@ class PlayerTests(unittest.TestCase):
             with self.assertRaises(KeyboardInterrupt):
                 run_player(browser, worker, self.state, self.server)
         browser.status.assert_called_once_with(
-            "Ready to display", "Your display is paired.\nAdd URLs in your PiSign workspace.",
+            "Ready to display", "Your display is paired.\nAdd URLs or assets in your PiSign workspace.",
         )
 
     def test_browser_navigates_one_tab_and_recovers_status_after_close(self):

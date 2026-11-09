@@ -26,7 +26,8 @@ class Rotation:
             return None
         self.index = (self.index + 1) % len(self.slides)
         slide = self.slides[self.index]
-        self.deadline = now + slide["duration"]
+        pages = slide.get("asset", {}).get("page_count", 0)
+        self.deadline = now + slide["duration"] * max(1, pages)
         return slide
 
 
@@ -74,24 +75,35 @@ def run_player(browser, worker, state_dir, server):
                 elif config is None:
                     browser.status("Connecting to PiSign", "Waiting for the server.\nCheck the network connection.")
                 elif config["state"] == "unpaired":
-                    code = config["code"]
-                    browser.status(
-                        f"{code[:5]}-{code[5:]}",
-                        f"Pair this display at {server}/devices/claim/\n"
-                        "Sign in, then enter this code. It expires in 10 minutes.",
-                    )
+                    code = config.get("code")
+                    if code:
+                        browser.status(
+                            f"{code[:5]}-{code[5:]}",
+                            f"Pair this display at {server}/devices/claim/\n"
+                            "Sign in, then enter this code. It expires in 10 minutes.",
+                        )
+                    else:
+                        browser.status("Pairing display", "Waiting for a pairing code.\nCheck the network connection.")
                 elif not rotation.slides:
                     browser.status(
                         config.get("name", "Ready to display"),
-                        "Your display is paired.\nAdd URLs in your PiSign workspace.",
+                        "Your display is paired.\nAdd URLs or assets in your PiSign workspace.",
                     )
                 else:
                     slide = rotation.due(time.monotonic())
                     if slide:
-                        browser.navigate(
-                            slide["url"], show_qr=slide.get("show_qr", True),
-                            qr_url=slide.get("qr_url", ""),
-                        )
+                        if "asset" in slide:
+                            ready = browser.navigate_asset(
+                                slide["asset"], slide["duration"], show_qr=slide.get("show_qr", False),
+                                qr_url=slide.get("qr_url", ""),
+                            )
+                            if not ready:
+                                rotation.deadline = time.monotonic() + 1
+                        else:
+                            browser.navigate(
+                                slide["url"], show_qr=slide.get("show_qr", True),
+                                qr_url=slide.get("qr_url", ""),
+                            )
                     try:
                         browser.update_watermark()
                     except BrowserTimeout as exc:

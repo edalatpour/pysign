@@ -86,7 +86,7 @@ def main():
             raise SystemExit("Another player is running. Stop it before changing its state.")
         if args.command == "reset":
             if not args.yes:
-                raise SystemExit("Reset discards local credentials and cached URLs. Confirm with --yes.")
+                raise SystemExit("Reset discards local credentials and cached content. Confirm with --yes.")
             reset_state(args.state_dir, clear_identity=True)
             print("Local identity reset. Remove the old display in the web UI, then run to pair again.")
             return

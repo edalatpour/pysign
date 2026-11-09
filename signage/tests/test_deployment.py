@@ -124,8 +124,14 @@ class ConfigurationTests(SimpleTestCase):
             self.load_settings(PISIGN_DEBUG="0")
 
     def test_aca_explicitly_trusts_ingress_scheme(self):
-        config = self.load_settings(PISIGN_AZURE_CONTAINER_APPS="1")
+        config = self.load_settings(
+            PISIGN_AZURE_CONTAINER_APPS="1", PISIGN_ASSET_AZURE_ACCOUNT_URL="https://private.blob.core.windows.net",
+        )
         self.assertEqual(config["SECURE_PROXY_SSL_HEADER"], ("HTTP_X_FORWARDED_PROTO", "https"))
+
+    def test_aca_requires_durable_private_asset_storage(self):
+        with self.assertRaisesMessage(ImproperlyConfigured, "PISIGN_ASSET_AZURE_ACCOUNT_URL"):
+            self.load_settings(PISIGN_AZURE_CONTAINER_APPS="1")
 
     def test_generic_proxy_option_is_preserved(self):
         config = self.load_settings(PISIGN_TRUST_PROXY="1")

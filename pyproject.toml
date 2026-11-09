@@ -16,6 +16,9 @@ server = [
     "joserfc>=1.6,<2",
     "requests>=2.32,<3",
     "whitenoise>=6.9,<7",
+    "Pillow>=11.3,<13",
+    "azure-storage-blob>=12.26,<13",
+    "azure-identity>=1.25,<2",
 ]
 player = ["websocket-client>=1.8,<2", "segno>=1.6,<2"]
 production = ["gunicorn>=23,<24", "psycopg[binary]>=3.2,<4"]

@@ -5,12 +5,14 @@ from datetime import timedelta
 from functools import wraps
 
 from django.db import IntegrityError, transaction
-from django.http import JsonResponse
+from django.http import JsonResponse, Http404
+from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
-from django.views.decorators.http import require_GET, require_POST
+from django.views.decorators.http import require_GET, require_POST, require_http_methods
 
-from .models import Device, PlayerReset, PlayerRestart
+from .assets import content_response
+from .models import Asset, Device, PlayerReset, PlayerRestart
 from .security import allow_request, digest_token
 
 PAIRING_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
@@ -79,10 +81,22 @@ def config(request):
         return JsonResponse({"state": "unpaired", "slides": []})
     if device.playlist_id and device.playlist.owner_id != device.owner_id:
         logger.error("Device %s has a playlist owned by a different account.", device.pk)
+    slides = []
+    if device.playlist_id and device.playlist.owner_id == device.owner_id:
+        for slide in device.playlist.slides.select_related("asset"):
+            item = {key: getattr(slide, key) for key in ("title", "url", "duration", "show_qr", "qr_url")}
+            if slide.asset_id:
+                if slide.asset.owner_id != device.owner_id:
+                    logger.error("Slide %s references an asset owned by another account.", slide.pk)
+                    continue
+                item["asset"] = {
+                    "id": str(slide.asset_id), "content_type": slide.asset.content_type,
+                    "size": slide.asset.size, "sha256": slide.asset.sha256, "page_count": slide.asset.page_count,
+                }
+            slides.append(item)
     result = {
         "state": "paired", "name": device.name,
-        "slides": list(device.playlist.slides.values("title", "url", "duration", "show_qr", "qr_url"))
-        if device.playlist_id and device.playlist.owner_id == device.owner_id else [],
+        "slides": slides,
     }
     reset = PlayerReset.objects.filter(
         device=device, completed_at__isnull=True, expires_at__gt=timezone.now(),
@@ -92,6 +106,8 @@ def config(request):
             "id": str(reset.request_id), "expires_at": reset.expires_at.isoformat(),
         }
         return JsonResponse(result)
+
+
     restart = PlayerRestart.objects.filter(
         device=device, completed_at__isnull=True, expires_at__gt=timezone.now(),
     ).first()
@@ -100,6 +116,19 @@ def config(request):
             "id": str(restart.request_id), "expires_at": restart.expires_at.isoformat(),
         }
     return JsonResponse(result)
+
+
+@require_http_methods(["GET", "HEAD"])
+@device_required
+def asset_content(request, asset_id):
+    device = request.device
+    if device.owner_id is None or not device.playlist_id or device.playlist.owner_id != device.owner_id:
+        raise Http404
+    asset = get_object_or_404(
+        Asset.objects.filter(slides__playlist_id=device.playlist_id).distinct(),
+        pk=asset_id, owner_id=device.owner_id,
+    )
+    return content_response(request, asset)
 
 
 @csrf_exempt

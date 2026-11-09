@@ -2,6 +2,10 @@ import json
 import logging
 import queue
 import threading
+import hashlib
+import os
+import tempfile
+from http.client import HTTPException
 from datetime import datetime, timezone
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
@@ -9,6 +13,7 @@ from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_ope
 from uuid import UUID
 
 from .storage import read_json, write_json
+from .assets import clear_assets, prepare_assets, validate_asset
 
 logger = logging.getLogger(__name__)
 
@@ -91,11 +96,14 @@ def validate_config(data):
         if not isinstance(slide, dict):
             raise ValueError("Each slide must be an object.")
         url, duration, title = slide.get("url"), slide.get("duration"), slide.get("title")
+        asset = validate_asset(slide["asset"]) if "asset" in slide else None
         qr_url = slide.get("qr_url", "")
         for label, value in (("slide", url), ("QR code", qr_url)):
             if not isinstance(value, str) or len(value) > 2048:
                 raise ValueError(f"Invalid {label} URL.")
             if label == "QR code" and value == "":
+                continue
+            if label == "slide" and asset is not None and value == "":
                 continue
             parsed = urlsplit(value)
             if (
@@ -110,9 +118,14 @@ def validate_config(data):
         show_qr = slide.get("show_qr", True)
         if type(show_qr) is not bool:
             raise ValueError("Slide show_qr must be a boolean.")
-        validated.append({
+        if asset is not None and (url != "" or (show_qr and not qr_url)):
+            raise ValueError("Assets cannot have a display URL or an implicit QR code URL.")
+        item = {
             "title": title, "url": url, "duration": duration, "show_qr": show_qr, "qr_url": qr_url,
-        })
+        }
+        if asset is not None:
+            item["asset"] = asset
+        validated.append(item)
     if data["state"] == "unpaired" and validated:
         raise ValueError("An unpaired device cannot have a playlist.")
     config = {"state": data["state"], "slides": validated}
@@ -129,6 +142,40 @@ class API:
         self.server = server
         # Ignore environment proxy settings for the credential-bearing device channel.
         self.opener = build_opener(ProxyHandler({}), NoRedirects())
+
+    def download_asset(self, asset, token, target, stopping):
+        request = Request(
+            self.server + f"/api/device/assets/{asset['id']}/",
+            headers={"Authorization": f"Bearer {token}", "Accept": asset["content_type"]},
+        )
+        fd, temporary = tempfile.mkstemp(prefix=".download-", dir=target.parent)
+        try:
+            with os.fdopen(fd, "wb") as output, self.opener.open(request, timeout=10) as response:
+                if response.status != 200 or response.headers.get_content_type() != asset["content_type"]:
+                    raise APIError("Invalid asset download response.")
+                digest, size = hashlib.sha256(), 0
+                while chunk := response.read(64 * 1024):
+                    if stopping.is_set():
+                        raise APIError("Asset download cancelled.")
+                    size += len(chunk)
+                    if size > asset["size"]:
+                        raise APIError("Asset exceeds its advertised size.")
+                    digest.update(chunk)
+                    output.write(chunk)
+                if size != asset["size"] or digest.hexdigest() != asset["sha256"]:
+                    raise APIError("Asset download failed integrity validation.")
+                output.flush()
+                os.fsync(output.fileno())
+            os.replace(temporary, target)
+        except HTTPError as exc:
+            if exc.code == 401:
+                raise CredentialRevoked("Device credential was revoked. Reset locally to pair again.") from exc
+            raise APIError(f"Asset download returned HTTP {exc.code}.") from exc
+        except (URLError, TimeoutError, OSError, HTTPException) as exc:
+            raise APIError(f"Cannot download asset: {type(exc).__name__}.") from exc
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
 
     def call(self, path, token=None, data=None):
         headers = {"Accept": "application/json"}
@@ -152,7 +199,7 @@ class API:
             if exc.code == 401:
                 raise CredentialRevoked("Device credential was revoked. Reset locally to pair again.") from exc
             raise APIError(f"Server returned HTTP {exc.code}.") from exc
-        except (URLError, TimeoutError, OSError, ValueError) as exc:
+        except (URLError, TimeoutError, OSError, ValueError, HTTPException) as exc:
             raise APIError(f"Cannot retrieve device configuration: {type(exc).__name__}.") from exc
 
 
@@ -213,6 +260,7 @@ class ConfigWorker(threading.Thread):
 
     def run(self):
         while not self.stopping.is_set():
+            config = None
             try:
                 token = self.credentials()
                 if self.stopping.is_set():
@@ -242,13 +290,20 @@ class ConfigWorker(threading.Thread):
                         continue
                 if config["state"] == "unpaired":
                     (self.state_dir / "playlist.json").unlink(missing_ok=True)
+                    clear_assets(self.state_dir)
+                    self.publish(("config", dict(config)))
                     pairing = self.api.call("/api/device/pairing/", token=token, data={})
                     code = pairing.get("code")
                     if not isinstance(code, str) or len(code) != 10 or not code.isalnum():
                         raise ValueError("Invalid pairing code.")
                     config["code"] = code
                 else:
+                    # Apply reassignment immediately, even if a new download fails.
                     write_json(self.state_dir / "playlist.json", {"server": self.server, "config": config})
+                    self.publish(("config", dict(config)))
+                    prepare_assets(config, self.api, token, self.state_dir, self.stopping)
+                    if self.stopping.is_set():
+                        return
                     self.acknowledge_restart(token)
                     if "restart" in response:
                         restart = validate_restart(response["restart"])
@@ -259,13 +314,17 @@ class ConfigWorker(threading.Thread):
                 self.publish(("config", config))
             except CredentialRevoked as exc:
                 (self.state_dir / "playlist.json").unlink(missing_ok=True)
+                clear_assets(self.state_dir)
                 logger.error("%s", exc)
                 self.publish(("fatal", str(exc)))
                 return
             except APIError as exc:
                 # Polling is separate from playback, so an outage cannot stall rotation.
                 logger.warning("%s Retrying in %s seconds.", exc, self.interval)
-                self.publish(("offline", str(exc)))
+                if config is not None:
+                    self.publish(("config", config))
+                else:
+                    self.publish(("offline", str(exc)))
             except (OSError, ValueError) as exc:
                 logger.error("Player state/configuration error: %s", exc)
                 self.publish(("fatal", str(exc)))

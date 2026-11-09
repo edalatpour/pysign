@@ -226,6 +226,55 @@ resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' 
   location: location
 }
 
+resource documentIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: '${prefix}-documents-identity'
+  location: location
+}
+
+module documentRegistryAccess './registry-access.bicep' = {
+  scope: resourceGroup(empty(existingRegistryName) ? resourceGroup().name : existingRegistryResourceGroup)
+  params: {
+    registryName: empty(existingRegistryName) ? registry!.name : existingRegistryName
+    identityResourceId: documentIdentity.id
+    principalId: documentIdentity.properties.principalId
+  }
+}
+
+resource assetStorage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
+  name: 'ps${suffix}assets'
+  location: location
+  kind: 'StorageV2'
+  sku: { name: 'Standard_LRS' }
+  properties: {
+    supportsHttpsTrafficOnly: true
+    minimumTlsVersion: 'TLS1_2'
+    allowBlobPublicAccess: false
+    allowSharedKeyAccess: false
+    defaultToOAuthAuthentication: true
+  }
+}
+
+resource assetBlobs 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' = {
+  parent: assetStorage
+  name: 'default'
+}
+
+resource assetContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
+  parent: assetBlobs
+  name: 'assets'
+  properties: { publicAccess: 'None' }
+}
+
+resource assetAccess 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(assetContainer.id, identity.id, 'StorageBlobDataContributor')
+  scope: assetContainer
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
+    principalId: identity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
 module registryAccess './registry-access.bicep' = {
   scope: resourceGroup(empty(existingRegistryName) ? resourceGroup().name : existingRegistryResourceGroup)
   params: {
