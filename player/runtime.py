@@ -3,7 +3,7 @@ import queue
 import time
 
 from .browser import BrowserError, BrowserTimeout
-from .client import RestartRequested, restart_pending, validate_config
+from .client import ResetRequested, RestartRequested, restart_pending, validate_config
 from .storage import read_json, write_json
 
 logger = logging.getLogger(__name__)
@@ -47,6 +47,7 @@ def run_player(browser, worker, state_dir, server):
     worker.start()
     fatal = None
     restart = None
+    reset = None
     try:
         while True:
             try:
@@ -57,6 +58,10 @@ def run_player(browser, worker, state_dir, server):
                 elif event == "config":
                     config = payload
                     rotation.configure(config["slides"])
+                    command = config.pop("reset", None)
+                    if command is not None and restart_pending(command):
+                        reset = command
+                        raise ResetRequested()
                     command = config.pop("restart", None)
                     if command is not None and restart_pending(command):
                         restart = command
@@ -101,12 +106,13 @@ def run_player(browser, worker, state_dir, server):
             time.sleep(0.1)
     finally:
         worker.stopping.set()
-        worker.join(timeout=22 if restart is not None else 12)
+        worker.join(timeout=22 if restart is not None or reset is not None else 12)
         browser.close()
-        if restart is not None:
+        if restart is not None or reset is not None:
+            action, command = ("reset", reset) if reset is not None else ("restart", restart)
             if worker.is_alive():
-                raise OSError("Polling worker did not stop; player restart aborted.")
-            write_json(state_dir / "restart.json", {
-                "server": server, "id": restart["id"], "acknowledged": False,
+                raise OSError(f"Polling worker did not stop; player {action} aborted.")
+            write_json(state_dir / f"{action}.json", {
+                "server": server, "id": command["id"], "acknowledged": False,
             })
-            logger.info("Restarting player for request %s.", restart["id"])
+            logger.info("Player %s for request %s.", action, command["id"])

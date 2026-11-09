@@ -390,9 +390,9 @@ poll supplies the name.
 On reboot the player can initially show the cached playlist until its first
 successful configuration fetch. Rebooting does not clear pairing or the cache.
 
-After disconnection, the screen shows a revoked-credential message rather than
-silently re-enrolling. To transfer or re-pair a physical device, stop its player,
-remove its old entry in the web UI, and reset locally:
+After device access revocation, the screen shows a revoked-credential message
+rather than silently re-enrolling. To recover that physical device or change
+servers, stop its player, remove any old entry in the web UI, and reset locally:
 
 ```sh
 .venv/bin/python -m player reset --yes
@@ -435,8 +435,42 @@ playlist website loaded successfully. **Expired without confirmation** does not
 prove the process never restarted: its acknowledgement could have been delayed.
 A new request can be made after completion or expiry. Local `reset --yes` also
 removes the receipt; device removal/revocation otherwise keeps its existing
-behavior. Arbitrary shell commands, OS reboot, remote reset, and player updates
+behavior. Arbitrary shell commands, OS reboot, and player updates
 are not supported by this action.
+
+### Remote reset / unpair
+
+**Reset / unpair** in display settings requires the owner's session, a
+CSRF-protected POST, and explicit confirmation. The authenticated configuration
+poll delivers a persistent, deduplicated request with a ten-minute delivery
+expiry. Reset takes priority over restart; offline and older players that do
+not support reset leave the request pending until expiry.
+
+The player stops its worker and Chromium, saves a server-bound `reset.json`
+receipt, deletes its cached playlist, status page, restart receipt, and Chromium
+profile/cookies, then re-executes its original invocation. It does not reboot
+the Pi or change autostart settings. The device credential is retained to allow
+remote re-pairing to the same server. Cleanup or receipt errors abort explicitly;
+an interrupted cleanup is retried on the next launch before playback starts.
+
+After cleanup, the player acknowledges the reset before fetching configuration.
+The server atomically clears ownership, playlist, pairing code, and pending
+restart. The display disappears from its former owner's dashboard and the player
+requests a fresh pairing code. Failed acknowledgements retry without playing the
+old playlist or resetting repeatedly. Completion is accepted even after delivery
+expiry because local cleanup may already have occurred; a superseded request ID
+cannot unpair the display. Duplicate completion cannot unpair a newly claimed
+display. Requests are never stored in the offline playlist.
+
+Use reset/unpair for normal transfers, retirement, or re-pairing of a working
+display. **Revoke device access**, under the collapsed **Advanced settings**,
+is for a lost, stolen, or compromised device. It immediately revokes the server
+credential and deletes the display's server entry and playlist without waiting
+for the player to cooperate. It does not remotely erase browser cookies and
+requires physical access for local recovery.
+
+Local `reset --yes` clears both command receipts and credentials
+but does not remove the server entry; use it when changing servers.
 
 ### Playback behavior and limits
 

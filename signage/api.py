@@ -10,7 +10,7 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
-from .models import Device, PlayerRestart
+from .models import Device, PlayerReset, PlayerRestart
 from .security import allow_request, digest_token
 
 PAIRING_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
@@ -81,6 +81,14 @@ def config(request):
         "state": "paired", "name": device.name,
         "slides": list(device.slides.values("title", "url", "duration")),
     }
+    reset = PlayerReset.objects.filter(
+        device=device, completed_at__isnull=True, expires_at__gt=timezone.now(),
+    ).first()
+    if reset is not None:
+        result["reset"] = {
+            "id": str(reset.request_id), "expires_at": reset.expires_at.isoformat(),
+        }
+        return JsonResponse(result)
     restart = PlayerRestart.objects.filter(
         device=device, completed_at__isnull=True, expires_at__gt=timezone.now(),
     ).first()
@@ -109,6 +117,32 @@ def restart_completed(request, request_id):
     if not updated:
         return JsonResponse({"status": "obsolete"})
     logger.info("Player restart %s completed for device %s.", request_id, request.device.pk)
+    return JsonResponse({"status": "completed"})
+
+
+@csrf_exempt
+@require_POST
+@device_required
+def reset_completed(request, request_id):
+    with transaction.atomic():
+        device = Device.objects.select_for_update().get(pk=request.device.pk)
+        reset = PlayerReset.objects.select_for_update().filter(device=device, request_id=request_id).first()
+        if reset is None:
+            return JsonResponse({"status": "obsolete"})
+        if reset.completed_at is not None:
+            return JsonResponse({"status": "completed"})
+        if device.owner_id is None:
+            return JsonResponse({"status": "obsolete"})
+        # Expiry limits delivery, not completion of an already executed reset.
+        reset.completed_at = timezone.now()
+        reset.save(update_fields=["completed_at"])
+        device.owner = None
+        device.pairing_code = None
+        device.pairing_expires_at = None
+        device.save(update_fields=["owner", "pairing_code", "pairing_expires_at"])
+        device.slides.all().delete()
+        PlayerRestart.objects.filter(device=device).delete()
+    logger.info("Player reset %s completed and device %s unpaired.", request_id, device.pk)
     return JsonResponse({"status": "completed"})
 
 

@@ -4,13 +4,14 @@ from datetime import timedelta
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.db import transaction
 from django.db.models import Max, Q
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_http_methods, require_POST
 
 from .forms import ClaimForm, DeviceForm, SlideForm
-from .models import Device, PlayerRestart, Slide
+from .models import Device, PlayerReset, PlayerRestart, Slide
 from .security import allow_request
 
 logger = logging.getLogger(__name__)
@@ -66,29 +67,48 @@ def device_detail(request, device_id):
     return render(request, "signage/device.html", {
         "device": device, "form": form, "slide_form": SlideForm(initial={"position": next_position}),
         "restart": PlayerRestart.objects.filter(device=device).first(),
+        "reset": PlayerReset.objects.filter(device=device).first(),
     })
 
 
 @login_required
 @require_POST
 def restart_player(request, device_id):
-    device = get_object_or_404(Device, pk=device_id, owner=request.user)
+    return queue_player_command(request, device_id, PlayerRestart, "restart")
+
+
+@login_required
+@require_POST
+def reset_player(request, device_id):
+    get_object_or_404(Device, pk=device_id, owner=request.user)
+    if request.POST.get("confirm") != "on":
+        messages.error(request, "Confirm deletion of the playlist and browser sessions before resetting.")
+        return redirect("device", device_id=device_id)
+    return queue_player_command(request, device_id, PlayerReset, "reset")
+
+
+@transaction.atomic
+def queue_player_command(request, device_id, model, command):
+    device = get_object_or_404(Device.objects.select_for_update(), pk=device_id, owner=request.user)
     now = timezone.now()
     values = {
         "request_id": uuid.uuid4(), "requested_by": request.user,
         "requested_at": now, "expires_at": now + timedelta(minutes=10), "completed_at": None,
     }
-    _, created = PlayerRestart.objects.get_or_create(device=device, defaults=values)
-    # A conditional update prevents repeated clicks from scheduling multiple restarts.
-    queued = created or PlayerRestart.objects.filter(device=device).filter(
+    _, created = model.objects.get_or_create(device=device, defaults=values)
+    # A conditional update prevents repeated clicks from scheduling multiple commands.
+    queued = created or model.objects.filter(device=device).filter(
         Q(expires_at__lte=now) | Q(completed_at__isnull=False),
     ).update(**values)
     if queued:
-        logger.info("Player restart %s requested for device %s by user %s.",
-                    values["request_id"], device.pk, request.user.pk)
-        messages.success(request, "Player restart requested. Waiting for the display to reconnect.")
+        logger.info("Player %s %s requested for device %s by user %s.",
+                    command, values["request_id"], device.pk, request.user.pk)
+        if command == "reset":
+            messages.success(request, "Reset/unpair requested. The display will leave your account after resetting.")
+        else:
+            messages.success(request, "Player restart requested. Waiting for the display to reconnect.")
     else:
-        messages.info(request, "A player restart is already pending for this display.")
+        messages.info(request, f"A player {command} is already pending for this display.")
     return redirect("device", device_id=device.pk)
 
 

@@ -21,6 +21,8 @@ h3 { margin: 5px 0; font-size: 18px; }
 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 24px; }
 .columns { display: grid; grid-template-columns: 2fr 1fr; gap: 24px; }
 aside .card { margin-bottom: 24px; }
+details.card > summary { cursor: pointer; font-weight: 650; }
+details.card[open] > summary { margin-bottom: 18px; }
 .display { color: var(--ink); transition: border-color .2s; }
 .display:hover { border-color: var(--accent); text-decoration: none; }
 .screen-icon { height: 130px; display: grid; place-items: center; border-radius: 9px; background: #e7f0eb; color: #468477; font: 12px monospace; letter-spacing: 3px; margin-bottom: 20px; border: 8px solid #d6e5dc; }
@@ -35,6 +37,7 @@ button.danger { background: #a53d36; }
 .quiet.danger { background: transparent; color: #a53d36; }
 label { display: block; margin-bottom: 6px; font-size: 14px; font-weight: 650; }
 input { width: 100%; padding: 11px; border: 1px solid #bccdc6; border-radius: 6px; font: inherit; background: #fff; color: var(--ink); }
+input[type="checkbox"] { width: auto; padding: 0; }
 input:focus { outline: 2px solid #81b9a7; outline-offset: 2px; }
 .helptext { display: block; margin-top: 6px; color: var(--muted); font-size: 12px; }
 form ul { color: var(--muted); font-size: 12px; padding-left: 20px; }

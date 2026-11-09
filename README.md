@@ -181,7 +181,20 @@ settings page to see whether the restarted player has reconnected.
 Existing players need the one-time manual update above to support this action;
 their desktop or X11 launchers do not need changing.
 
-To transfer a display or change servers, stop the player, remove its old display
+Use **Reset / unpair** in display settings to remotely delete its playlist and
+browser cookies, release it from your account, and show a fresh pairing code.
+Confirm the destructive action before submitting. Offline or older players
+remain pending until the ten-minute delivery expiry; update players first.
+The player keeps its server-bound credential to pair again without physical
+access. This is the normal action for transferring, retiring, or re-pairing a
+working display.
+
+For a lost, stolen, or compromised device, expand **Advanced settings** and choose
+**Revoke device access**. This immediately revokes its server credential and
+deletes the server entry and playlist without waiting for the player to
+cooperate. Browser cookies are not remotely erased.
+
+To change servers or recover after access revocation, stop the player, remove its old display
 entry in the dashboard, then reset it locally and pair again:
 
 ```sh

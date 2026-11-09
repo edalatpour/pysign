@@ -25,16 +25,36 @@ class RestartRequested(Exception):
     pass
 
 
-def validate_restart(data):
+class ResetRequested(Exception):
+    pass
+
+
+def validate_command(data, command):
     if not isinstance(data, dict) or not isinstance(data.get("id"), str):
-        raise ValueError("Invalid player restart request.")
+        raise ValueError(f"Invalid player {command} request.")
     request_id = str(UUID(data["id"]))
     if request_id != data["id"] or not isinstance(data.get("expires_at"), str):
-        raise ValueError("Invalid player restart request.")
+        raise ValueError(f"Invalid player {command} request.")
     expires = datetime.fromisoformat(data["expires_at"])
     if expires.tzinfo is None:
-        raise ValueError("Player restart expiry must include a timezone.")
+        raise ValueError(f"Player {command} expiry must include a timezone.")
     return {"id": request_id, "expires_at": expires.isoformat()}
+
+
+def validate_restart(data):
+    return validate_command(data, "restart")
+
+
+def command_receipt(state_dir, server, command):
+    receipt = read_json(state_dir / f"{command}.json")
+    if receipt is not None and (
+        not isinstance(receipt, dict) or receipt.get("server") != server
+        or not isinstance(receipt.get("id"), str)
+        or str(UUID(receipt["id"])) != receipt["id"]
+        or type(receipt.get("acknowledged")) is not bool
+    ):
+        raise ValueError(f"Invalid saved {command} receipt. Reset locally before changing servers.")
+    return receipt
 
 
 def restart_pending(data):
@@ -136,16 +156,8 @@ class ConfigWorker(threading.Thread):
         self.stopping = threading.Event()
         self.ready = threading.Event()
         self.api = API(server)
-        self.restart_receipt = read_json(self.state_dir / "restart.json")
-        if self.restart_receipt is not None:
-            receipt = self.restart_receipt
-            if (
-                not isinstance(receipt, dict) or receipt.get("server") != server
-                or not isinstance(receipt.get("id"), str)
-                or str(UUID(receipt["id"])) != receipt["id"]
-                or type(receipt.get("acknowledged")) is not bool
-            ):
-                raise ValueError("Invalid saved restart receipt. Reset locally before changing servers.")
+        self.restart_receipt = command_receipt(state_dir, server, "restart")
+        self.reset_receipt = command_receipt(state_dir, server, "reset")
 
     def publish(self, event):
         try:
@@ -196,11 +208,31 @@ class ConfigWorker(threading.Thread):
                 token = self.credentials()
                 if self.stopping.is_set():
                     return
+                if self.reset_receipt is not None and not self.reset_receipt["acknowledged"]:
+                    receipt = self.reset_receipt
+                    result = self.api.call(
+                        f"/api/device/resets/{receipt['id']}/completed/", token=token, data={},
+                    )
+                    if result.get("status") not in ("completed", "obsolete"):
+                        raise ValueError("Invalid player reset acknowledgement.")
+                    updated = {**receipt, "acknowledged": True}
+                    write_json(self.state_dir / "reset.json", updated)
+                    self.reset_receipt = updated
+                    logger.info("Player reset %s acknowledgement: %s.", receipt["id"], result["status"])
                 response = self.api.call("/api/device/config/", token=token)
                 if self.stopping.is_set():
                     return
                 config = validate_config(response)
+                if config["state"] == "paired" and "reset" in response:
+                    reset = validate_command(response["reset"], "reset")
+                    if restart_pending(reset) and (
+                        self.reset_receipt is None or self.reset_receipt["id"] != reset["id"]
+                    ):
+                        self.publish(("config", {**config, "reset": reset}))
+                        self.stopping.wait(self.interval)
+                        continue
                 if config["state"] == "unpaired":
+                    (self.state_dir / "playlist.json").unlink(missing_ok=True)
                     pairing = self.api.call("/api/device/pairing/", token=token, data={})
                     code = pairing.get("code")
                     if not isinstance(code, str) or len(code) != 10 or not code.isalnum():
