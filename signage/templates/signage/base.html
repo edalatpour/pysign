@@ -19,6 +19,7 @@
       {% if user.is_authenticated %}
         <span>My workspace</span>
         <a href="{% url 'dashboard' %}">Displays</a>
+        <a href="{% url 'playlists' %}">Playlists</a>
         <form method="post" action="{% url 'logout' %}">{% csrf_token %}<button class="quiet">Sign out</button></form>
       {% else %}
         <a href="{% url 'login' %}">Sign in</a>

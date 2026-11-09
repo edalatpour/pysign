@@ -35,9 +35,9 @@ button, .button { display: inline-block; background: var(--accent); color: white
 button.danger { background: #a53d36; }
 .quiet.danger { background: transparent; color: #a53d36; }
 label { display: block; margin-bottom: 6px; font-size: 14px; font-weight: 650; }
-input { width: 100%; padding: 11px; border: 1px solid #bccdc6; border-radius: 6px; font: inherit; background: #fff; color: var(--ink); }
+input, select { width: 100%; padding: 11px; border: 1px solid #bccdc6; border-radius: 6px; font: inherit; background: #fff; color: var(--ink); }
 input[type="checkbox"] { width: auto; padding: 0; }
-input:focus { outline: 2px solid #81b9a7; outline-offset: 2px; }
+input:focus, select:focus { outline: 2px solid #81b9a7; outline-offset: 2px; }
 .helptext { display: block; margin-top: 6px; color: var(--muted); font-size: 12px; }
 form ul { color: var(--muted); font-size: 12px; padding-left: 20px; }
 .errorlist, .error { color: #a53d36; }

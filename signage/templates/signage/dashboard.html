@@ -9,6 +9,7 @@
   <a class="card display" href="{% url 'device' device.pk %}">
     <p class="badge {% if device.online %}online{% endif %}">{% if device.online %}Online{% else %}Offline{% endif %}</p>
     <h2>{{ device.name }}</h2>
+    <p class="muted">Playlist: {{ device.playlist.name|default:"Not assigned" }}</p>
     <p class="muted">Last seen: {{ device.last_seen|date:"M j, H:i"|default:"Never" }} UTC</p>
     <span class="text-link">Manage display &rarr;</span>
   </a>

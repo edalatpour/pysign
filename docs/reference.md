@@ -261,8 +261,22 @@ Leave this option off for a working GPU-accelerated desktop/Wayland session.
 
 An unconfigured Pi opens a full-screen pairing page. In the web UI, sign in,
 choose **Pair a display**, and enter its code and a display name. Codes expire
-after 10 minutes and refresh automatically. Add URLs to the paired display;
-the player picks them up on its next poll.
+after 10 minutes and refresh automatically. Create a playlist under **Playlists**
+and add its URLs, then select it in the paired display's settings and save.
+Alternatively, **Create a new playlist** in display settings opens the creation
+screen and assigns the new playlist to that display when saved. Multiple displays
+can share a playlist; its edits reach every assigned player on the next poll.
+Each display has at most one assigned playlist. Clearing the selection leaves
+the player on its ready/status screen after its next successful poll.
+
+When upgrading from per-display playlists, the database migration combines each
+account's URLs into its `default` playlist and assigns its existing displays to
+that playlist. The migration keeps duplicate entries and all URL/QR/duration
+settings, preserving order within each former playlist and concatenating them in
+display creation order. The player API path and response format do not change:
+it still returns one ordered `slides` list for the display's assigned playlist.
+No player implementation change or update is needed. Rolling back the migration
+copies each display's currently assigned playlist back into per-display URLs.
 
 For an isolated development LAN only:
 
@@ -454,8 +468,10 @@ remote re-pairing to the same server. Cleanup or receipt errors abort explicitly
 an interrupted cleanup is retried on the next launch before playback starts.
 
 After cleanup, the player acknowledges the reset before fetching configuration.
-The server atomically clears ownership, playlist, pairing code, and pending
-restart. The display disappears from its former owner's dashboard and the player
+The server atomically clears ownership, playlist assignment, pairing code, and
+pending restart. The saved account-level playlist and its URLs remain available
+to the owner and any other assigned displays. The display disappears from its
+former owner's dashboard and the player
 requests a fresh pairing code. Failed acknowledgements retry without playing the
 old playlist or resetting repeatedly. Completion is accepted even after delivery
 expiry because local cleanup may already have occurred; a superseded request ID
@@ -465,8 +481,10 @@ display. Requests are never stored in the offline playlist.
 Use reset/unpair for normal transfers, retirement, or re-pairing of a working
 display. **Revoke device access**, under the collapsed **Advanced settings**,
 is for a lost, stolen, or compromised device. It immediately revokes the server
-credential and deletes the display's server entry and playlist without waiting
-for the player to cooperate. It does not remotely erase browser cookies and
+credential and deletes the display's server entry without waiting for the player
+to cooperate. Saved playlists and other displays are not affected. To delete a
+saved playlist, first clear or change its assignment on all displays, then confirm
+deletion on the playlist screen. Revocation does not remotely erase browser cookies and
 requires physical access for local recovery.
 
 Local `reset --yes` clears both command receipts and credentials
