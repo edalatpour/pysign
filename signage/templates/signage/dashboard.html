@@ -7,7 +7,6 @@
 <div class="grid">
 {% for device in devices %}
   <a class="card display" href="{% url 'device' device.pk %}">
-    <div class="screen-icon">WEB / {{ forloop.counter|stringformat:"02d" }}</div>
     <p class="badge {% if device.online %}online{% endif %}">{% if device.online %}Online{% else %}Offline{% endif %}</p>
     <h2>{{ device.name }}</h2>
     <p class="muted">Last seen: {{ device.last_seen|date:"M j, H:i"|default:"Never" }} UTC</p>
