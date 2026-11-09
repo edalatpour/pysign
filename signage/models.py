@@ -16,6 +16,22 @@ def validate_display_url(value):
         raise ValidationError("URLs must not contain embedded credentials.")
 
 
+class Playlist(models.Model):
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="playlists",
+    )
+    name = models.CharField(max_length=100)
+
+    class Meta:
+        ordering = ["name", "id"]
+        constraints = [
+            models.UniqueConstraint(fields=["owner", "name"], name="unique_owner_playlist_name"),
+        ]
+
+    def __str__(self):
+        return self.name
+
+
 class Device(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     owner = models.ForeignKey(
@@ -23,6 +39,9 @@ class Device(models.Model):
         related_name="devices",
     )
     name = models.CharField(max_length=100, default="New display")
+    playlist = models.ForeignKey(
+        Playlist, on_delete=models.RESTRICT, null=True, blank=True, related_name="devices",
+    )
     token_digest = models.CharField(max_length=64, unique=True, editable=False)
     pairing_code = models.CharField(max_length=11, unique=True, null=True, editable=False)
     pairing_expires_at = models.DateTimeField(null=True, editable=False)
@@ -38,7 +57,7 @@ class Device(models.Model):
 
 
 class Slide(models.Model):
-    device = models.ForeignKey(Device, on_delete=models.CASCADE, related_name="slides")
+    playlist = models.ForeignKey(Playlist, on_delete=models.CASCADE, related_name="slides")
     title = models.CharField(max_length=100)
     url = models.URLField(max_length=2048, validators=[validate_display_url])
     show_qr = models.BooleanField(default=True)

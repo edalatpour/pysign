@@ -1,0 +1,50 @@
+{% extends "signage/base.html" %}
+{% block title %}{{ playlist.name }} - PiSign{% endblock %}
+{% block content %}
+<a class="text-link" href="{% url 'playlists' %}">&larr; All playlists</a>
+<div class="page-heading">
+  <div><p class="eyebrow">PLAYLIST</p><h1>{{ playlist.name }}</h1><p class="muted">Changes apply to every display using this playlist.</p></div>
+</div>
+<div class="columns">
+  <section class="card">
+    <h2>URLs</h2><p class="muted">URLs play in order, then repeat. Changes reach online players within 30 seconds.</p>
+    {% for slide in playlist.slides.all %}
+      <article class="slide">
+        <div><span class="eyebrow">{{ slide.position }} / {{ slide.duration }} SECONDS</span>
+          <h3>{{ slide.title }}</h3><p class="url">{{ slide.url }}</p>
+        </div>
+        <div class="actions">
+          <a href="{% url 'edit-slide' playlist.pk slide.pk %}">Edit</a>
+          <form method="post" action="{% url 'remove-slide' playlist.pk slide.pk %}">{% csrf_token %}<button class="quiet danger">Remove</button></form>
+        </div>
+      </article>
+    {% empty %}
+      <p class="empty muted">No URLs yet. Add your first page below.</p>
+    {% endfor %}
+    <h2>Add a URL</h2>
+    <form method="post" action="{% url 'add-slide' playlist.pk %}">{% csrf_token %}{{ slide_form.as_p }}<button>Add to playlist</button></form>
+  </section>
+  <aside>
+    <section class="card">
+      <h2>Playlist name</h2>
+      <form method="post">{% csrf_token %}{{ form.as_p }}<button>Save name</button></form>
+    </section>
+    <section class="card">
+      <h2>Assigned displays</h2>
+      {% for device in playlist.devices.all %}
+        <p><a href="{% url 'device' device.pk %}">{{ device.name }}</a></p>
+      {% empty %}
+        <p class="muted">No displays yet. Select this playlist in a display's settings.</p>
+      {% endfor %}
+    </section>
+    <section class="card">
+      <h2>Delete playlist</h2>
+      <p class="muted">Assign another playlist or clear it from all displays before deleting. This permanently deletes the playlist and its URLs.</p>
+      <form method="post" action="{% url 'remove-playlist' playlist.pk %}">{% csrf_token %}
+        <p><label><input type="checkbox" name="confirm" required> Delete this playlist and its URLs.</label></p>
+        <button class="danger">Delete playlist</button>
+      </form>
+    </section>
+  </aside>
+</div>
+{% endblock %}

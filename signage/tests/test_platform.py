@@ -8,7 +8,7 @@ from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
-from signage.models import Device, PlayerReset, PlayerRestart, RateLimit, Slide
+from signage.models import Device, PlayerReset, PlayerRestart, Playlist, RateLimit, Slide
 from signage.security import digest_token
 
 
@@ -17,20 +17,26 @@ class PlatformTests(TestCase):
     def setUp(self):
         self.owner = get_user_model().objects.create_user("owner")
         self.other = get_user_model().objects.create_user("other")
+        self.playlist = Playlist.objects.create(owner=self.owner, name="Scores playlist")
+        self.other_playlist = Playlist.objects.create(owner=self.other, name="Private playlist")
         self.token = "a" * 43
         self.device = Device.objects.create(
-            name="Scoreboard", owner=self.owner, token_digest=digest_token(self.token),
+            name="Scoreboard", owner=self.owner, playlist=self.playlist, token_digest=digest_token(self.token),
         )
         self.other_device = Device.objects.create(
-            name="Other private display", owner=self.other, token_digest=digest_token("b" * 43),
+            name="Other private display", owner=self.other, playlist=self.other_playlist,
+            token_digest=digest_token("b" * 43),
         )
         self.slide = Slide.objects.create(
-            device=self.device, title="Scores", url="https://example.com/scores", duration=5,
+            playlist=self.playlist, title="Scores", url="https://example.com/scores", duration=5,
         )
         self.client.force_login(self.owner)
 
     def device_url(self, name="device", device=None, **kwargs):
         return reverse(name, kwargs={"device_id": (device or self.device).pk, **kwargs})
+
+    def playlist_url(self, name="playlist", playlist=None, **kwargs):
+        return reverse(name, kwargs={"playlist_id": (playlist or self.playlist).pk, **kwargs})
 
     def test_dashboard_only_lists_owned_displays(self):
         response = self.client.get(reverse("dashboard"))
@@ -48,16 +54,16 @@ class PlatformTests(TestCase):
         self.assertContains(response, "Manage display")
 
     def test_new_url_defaults_to_one_hour(self):
-        response = self.client.get(self.device_url())
+        response = self.client.get(self.playlist_url())
         self.assertEqual(response.context["slide_form"]["duration"].value(), 3600)
         self.assertEqual(Slide().duration, 3600)
 
     def test_qr_checkbox_defaults_to_checked_on_add_and_edit(self):
         self.assertTrue(Slide().show_qr)
         for url, form_name in [
-            (self.device_url(), "slide_form"),
-            (self.device_url("add-slide"), "form"),
-            (self.device_url("edit-slide", slide_id=self.slide.pk), "form"),
+            (self.playlist_url(), "slide_form"),
+            (self.playlist_url("add-slide"), "form"),
+            (self.playlist_url("edit-slide", slide_id=self.slide.pk), "form"),
         ]:
             with self.subTest(url=url):
                 response = self.client.get(url)
@@ -70,10 +76,10 @@ class PlatformTests(TestCase):
             "title": "No QR", "url": "https://example.com/private",
             "duration": 30, "position": 1,
         }
-        self.assertEqual(self.client.post(self.device_url("add-slide"), data).status_code, 302)
-        added = self.device.slides.get(title="No QR")
+        self.assertEqual(self.client.post(self.playlist_url("add-slide"), data).status_code, 302)
+        added = self.playlist.slides.get(title="No QR")
         self.assertFalse(added.show_qr)
-        url = self.device_url("edit-slide", slide_id=self.slide.pk)
+        url = self.playlist_url("edit-slide", slide_id=self.slide.pk)
         self.assertEqual(self.client.post(url, data).status_code, 302)
         self.slide.refresh_from_db()
         self.assertFalse(self.slide.show_qr)
@@ -87,7 +93,7 @@ class PlatformTests(TestCase):
         self.assertEqual([slide["show_qr"] for slide in response.json()["slides"]], [True, False])
 
     def test_custom_qr_url_is_optional_saved_and_can_be_cleared(self):
-        response = self.client.get(self.device_url())
+        response = self.client.get(self.playlist_url())
         self.assertEqual(response.context["slide_form"]["qr_url"].value(), "")
         self.assertContains(response, "QR code URL")
         self.assertContains(response, "Leave blank to use the current page URL")
@@ -96,11 +102,11 @@ class PlatformTests(TestCase):
             "title": "Custom QR", "url": "https://example.com/content",
             "duration": 30, "position": 1, "show_qr": "on", "qr_url": target,
         }
-        self.assertEqual(self.client.post(self.device_url("add-slide"), data).status_code, 302)
-        slide = self.device.slides.get(title="Custom QR")
+        self.assertEqual(self.client.post(self.playlist_url("add-slide"), data).status_code, 302)
+        slide = self.playlist.slides.get(title="Custom QR")
         self.assertEqual(slide.url, data["url"])
         self.assertEqual(slide.qr_url, target)
-        url = self.device_url("edit-slide", slide_id=slide.pk)
+        url = self.playlist_url("edit-slide", slide_id=slide.pk)
         self.assertEqual(self.client.get(url).context["form"]["qr_url"].value(), target)
         response = self.client.get(reverse("api-config"), HTTP_AUTHORIZATION=f"Bearer {self.token}")
         self.assertEqual(response.json()["slides"][1]["qr_url"], target)
@@ -120,13 +126,13 @@ class PlatformTests(TestCase):
             "https://user:password@example.com/", "https://example.com/" + "a" * 2048,
         ]:
             with self.subTest(target=target):
-                response = self.client.post(self.device_url("add-slide"), {
+                response = self.client.post(self.playlist_url("add-slide"), {
                     "title": "Bad QR", "url": "https://example.com/content",
                     "duration": 30, "position": 1, "qr_url": target,
                 })
                 self.assertEqual(response.status_code, 200)
                 self.assertIn("qr_url", response.context["form"].errors)
-        self.assertEqual(self.device.slides.count(), 1)
+        self.assertEqual(self.playlist.slides.count(), 1)
 
     def test_dashboard_includes_brand_and_app_icons(self):
         response = self.client.get(reverse("dashboard"))
@@ -140,16 +146,13 @@ class PlatformTests(TestCase):
 
     def test_every_management_surface_rejects_other_owner(self):
         foreign_slide = Slide.objects.create(
-            device=self.other_device, title="Private", url="https://example.org",
+            playlist=self.other_playlist, title="Private", url="https://example.org",
         )
         paths = [
             ("device", {}),
             ("remove-device", {}),
             ("restart-player", {}),
             ("reset-player", {}),
-            ("add-slide", {}),
-            ("edit-slide", {"slide_id": foreign_slide.pk}),
-            ("remove-slide", {"slide_id": foreign_slide.pk}),
         ]
         for name, kwargs in paths:
             with self.subTest(name=name):
@@ -161,21 +164,21 @@ class PlatformTests(TestCase):
         self.assertEqual(self.client.get(self.device_url(device=self.other_device)).status_code, 404)
         self.other_device.refresh_from_db()
         self.assertEqual(self.other_device.name, "Other private display")
-        self.assertEqual(foreign_slide.device_id, self.other_device.pk)
+        self.assertEqual(foreign_slide.playlist_id, self.other_playlist.pk)
 
-    def test_slide_id_cannot_be_mixed_with_owned_device(self):
+    def test_slide_id_cannot_be_mixed_with_owned_playlist(self):
         foreign_slide = Slide.objects.create(
-            device=self.other_device, title="Private", url="https://example.org",
+            playlist=self.other_playlist, title="Private", url="https://example.org",
         )
         for name in ("edit-slide", "remove-slide"):
             self.assertEqual(self.client.post(
-                self.device_url(name, slide_id=foreign_slide.pk),
+                self.playlist_url(name, slide_id=foreign_slide.pk),
                 {"title": "Stolen", "url": "https://example.com", "duration": 5, "position": 0},
             ).status_code, 404)
 
     def test_playlist_changes_and_order(self):
         for title, duration, position in [("Calendar", 5, 2), ("Scores first", 10, 1)]:
-            response = self.client.post(self.device_url("add-slide"), {
+            response = self.client.post(self.playlist_url("add-slide"), {
                 "title": title, "url": "https://example.com/" + str(position),
                 "duration": duration, "position": position,
             })
@@ -219,22 +222,22 @@ class PlatformTests(TestCase):
         ]
         for url, duration in invalid:
             with self.subTest(url=url, duration=duration):
-                response = self.client.post(self.device_url("add-slide"), {
+                response = self.client.post(self.playlist_url("add-slide"), {
                     "title": "Bad", "url": url, "duration": duration, "position": 0,
                 })
                 self.assertEqual(response.status_code, 200)
                 self.assertTrue(response.context["form"].errors)
-        self.assertEqual(self.device.slides.count(), 1)
+        self.assertEqual(self.playlist.slides.count(), 1)
 
     def test_mutations_require_csrf_and_post(self):
         csrf_client = Client(enforce_csrf_checks=True)
         csrf_client.force_login(self.owner)
-        for name, kwargs in [
-            ("remove-device", {}), ("restart-player", {}),
-            ("reset-player", {}),
-            ("remove-slide", {"slide_id": self.slide.pk}),
+        for url in [
+            self.device_url("remove-device"), self.device_url("restart-player"),
+            self.device_url("reset-player"),
+            self.playlist_url("remove-slide", slide_id=self.slide.pk),
+            self.playlist_url("remove-playlist"),
         ]:
-            url = self.device_url(name, **kwargs)
             self.assertEqual(csrf_client.post(url).status_code, 403)
             self.assertEqual(csrf_client.get(url).status_code, 405)
         self.assertEqual(csrf_client.post(reverse("claim"), {"code": "ABCDE23456", "name": "Bad"}).status_code, 403)
@@ -244,7 +247,7 @@ class PlatformTests(TestCase):
         self.assertEqual(self.client.get(
             reverse("api-config"), HTTP_AUTHORIZATION=f"Bearer {self.token}",
         ).status_code, 401)
-        self.assertFalse(Slide.objects.filter(pk=self.slide.pk).exists())
+        self.assertTrue(Slide.objects.filter(pk=self.slide.pk).exists())
 
     def test_revocation_is_under_collapsed_advanced_settings(self):
         response = self.client.get(self.device_url())
@@ -317,7 +320,7 @@ class PlatformTests(TestCase):
         self.device.refresh_from_db()
         self.assertEqual(self.device.owner, self.owner)
         self.assertEqual(self.device.token_digest, digest_token(self.token))
-        self.assertEqual(self.device.slides.count(), 1)
+        self.assertEqual(self.playlist.slides.count(), 1)
         self.assertContains(self.client.get(self.device_url()), "Player restarted and reconnected")
         new_restart = self.queue_restart()
         self.assertNotEqual(new_restart.request_id, restart.request_id)
@@ -418,9 +421,9 @@ class PlatformTests(TestCase):
         self.assertContains(self.client.get(self.device_url()), "Reset pending")
         self.device.refresh_from_db()
         self.assertEqual(self.device.owner, self.owner)
-        self.assertEqual(self.device.slides.count(), 1)
+        self.assertEqual(self.playlist.slides.count(), 1)
 
-    def test_reset_unpairs_and_clears_playlist_without_revoking_credential(self):
+    def test_reset_unpairs_and_detaches_playlist_without_revoking_credential(self):
         self.queue_restart()
         reset = self.queue_reset()
         response = self.complete_reset(reset.request_id)
@@ -431,7 +434,8 @@ class PlatformTests(TestCase):
         self.assertIsNone(self.device.pairing_code)
         self.assertIsNone(self.device.pairing_expires_at)
         self.assertEqual(self.device.token_digest, digest_token(self.token))
-        self.assertFalse(self.device.slides.exists())
+        self.assertIsNone(self.device.playlist_id)
+        self.assertTrue(self.playlist.slides.filter(pk=self.slide.pk).exists())
         self.assertFalse(PlayerRestart.objects.exists())
         self.assertNotContains(self.client.get(reverse("dashboard")), "Scoreboard")
         self.assertEqual(self.client.get(self.device_url()).status_code, 404)
@@ -447,6 +451,7 @@ class PlatformTests(TestCase):
         self.assertEqual(self.complete_reset(reset.request_id).json(), {"status": "completed"})
         self.device.refresh_from_db()
         self.assertEqual(self.device.owner, self.other)
+        self.assertIsNone(self.device.playlist_id)
         self.assertEqual(PlayerReset.objects.get(device=self.device).completed_at, completed_at)
 
     def test_reset_expiry_limits_delivery_but_not_delayed_completion(self):
@@ -489,7 +494,7 @@ class PlatformTests(TestCase):
         }), content_type="application/json")
         device = Device.objects.get(pk=response.json()["device_id"])
         self.assertIsNone(device.owner_id)
-        self.assertEqual(device.slides.count(), 0)
+        self.assertIsNone(device.playlist_id)
 
     def test_pairing_code_is_single_use_and_not_in_config(self):
         device, token = self.register_device()
@@ -553,11 +558,13 @@ class PlatformTests(TestCase):
         self.assertContains(response, "&lt;script&gt;")
 
     def test_device_and_slide_edits_and_removal(self):
-        self.assertEqual(self.client.post(self.device_url(), {"name": "Renamed"}).status_code, 302)
-        self.assertEqual(self.client.post(self.device_url("edit-slide", slide_id=self.slide.pk), {
+        self.assertEqual(self.client.post(self.device_url(), {
+            "name": "Renamed", "playlist": self.playlist.pk,
+        }).status_code, 302)
+        self.assertEqual(self.client.post(self.playlist_url("edit-slide", slide_id=self.slide.pk), {
             "title": "Updated", "url": "https://example.org", "duration": 8, "position": 4,
         }).status_code, 302)
         self.slide.refresh_from_db()
         self.assertEqual(self.slide.duration, 8)
-        self.client.post(self.device_url("remove-slide", slide_id=self.slide.pk))
-        self.assertEqual(self.device.slides.count(), 0)
+        self.client.post(self.playlist_url("remove-slide", slide_id=self.slide.pk))
+        self.assertEqual(self.playlist.slides.count(), 0)

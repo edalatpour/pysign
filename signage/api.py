@@ -27,7 +27,7 @@ def device_required(view):
         scheme, _, token = request.headers.get("Authorization", "").partition(" ")
         device = None
         if scheme == "Bearer" and 32 <= len(token) <= 128:
-            device = Device.objects.filter(token_digest=digest_token(token)).first()
+            device = Device.objects.select_related("playlist").filter(token_digest=digest_token(token)).first()
         if device is None:
             return JsonResponse({"error": "Invalid device credential."}, status=401)
         request.device = device
@@ -77,9 +77,12 @@ def config(request):
     Device.objects.filter(pk=device.pk).update(last_seen=timezone.now())
     if device.owner_id is None:
         return JsonResponse({"state": "unpaired", "slides": []})
+    if device.playlist_id and device.playlist.owner_id != device.owner_id:
+        logger.error("Device %s has a playlist owned by a different account.", device.pk)
     result = {
         "state": "paired", "name": device.name,
-        "slides": list(device.slides.values("title", "url", "duration", "show_qr", "qr_url")),
+        "slides": list(device.playlist.slides.values("title", "url", "duration", "show_qr", "qr_url"))
+        if device.playlist_id and device.playlist.owner_id == device.owner_id else [],
     }
     reset = PlayerReset.objects.filter(
         device=device, completed_at__isnull=True, expires_at__gt=timezone.now(),
@@ -137,10 +140,10 @@ def reset_completed(request, request_id):
         reset.completed_at = timezone.now()
         reset.save(update_fields=["completed_at"])
         device.owner = None
+        device.playlist = None
         device.pairing_code = None
         device.pairing_expires_at = None
-        device.save(update_fields=["owner", "pairing_code", "pairing_expires_at"])
-        device.slides.all().delete()
+        device.save(update_fields=["owner", "playlist", "pairing_code", "pairing_expires_at"])
         PlayerRestart.objects.filter(device=device).delete()
     logger.info("Player reset %s completed and device %s unpaired.", request_id, device.pk)
     return JsonResponse({"status": "completed"})

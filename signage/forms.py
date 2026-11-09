@@ -1,6 +1,6 @@
 from django import forms
 
-from .models import Device, Slide
+from .models import Device, Playlist, Slide
 
 
 class ClaimForm(forms.Form):
@@ -12,8 +12,29 @@ class ClaimForm(forms.Form):
 
 
 class DeviceForm(forms.ModelForm):
+    def __init__(self, *args, owner, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["playlist"].queryset = owner.playlists.all()
+        self.fields["playlist"].empty_label = "No playlist (ready screen)"
+
     class Meta:
         model = Device
+        fields = ["name", "playlist"]
+
+
+class PlaylistForm(forms.ModelForm):
+    def __init__(self, *args, owner, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.instance.owner = owner
+
+    def clean_name(self):
+        name = self.cleaned_data["name"]
+        if Playlist.objects.filter(owner=self.instance.owner, name=name).exclude(pk=self.instance.pk).exists():
+            raise forms.ValidationError("You already have a playlist with this name.")
+        return name
+
+    class Meta:
+        model = Playlist
         fields = ["name"]
 
 

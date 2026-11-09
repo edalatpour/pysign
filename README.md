@@ -11,9 +11,10 @@ show scoreboards, calendars, announcements, or dashboards on one or more screens
 The player targets the Raspberry Pi Zero 2 W; keep pages lightweight on its
 512 MB of RAM.
 
-Each signed-in user has a private collection of displays. Each display has its
-own ordered playlist of HTTP(S) URLs, with a duration for each page. You manage
-the playlists in your browser rather than editing files on every Pi.
+Each signed-in user has private collections of displays and playlists. A playlist
+is an ordered list of HTTP(S) URLs, with a duration for each page. Assign one
+playlist to each display; multiple displays can use the same playlist. You manage
+playlists in your browser rather than editing files on every Pi.
 
 ## How it works
 
@@ -129,7 +130,12 @@ same server URL, sign in, choose **Pair a display**, and enter the code and a
 recognizable display name. Pairing codes expire after ten minutes and refresh
 automatically.
 
-Open the paired display in the dashboard and add its URLs, order, and durations.
+Open **Playlists** in the dashboard to create a playlist and add its URLs, order,
+and durations. In a display's settings, select an existing playlist and choose
+**Save settings**, or choose **Create a new playlist** to open the creation screen.
+Creating a playlist from a display's settings automatically assigns it to that
+display. You can assign the same playlist to other displays; edits apply to all
+of them. A display without an assigned playlist shows its ready/status screen.
 For example, rotate a club scoreboard and calendar for 30 seconds each. Durations
 can range from 1 to 86,400 seconds; new entries default to 3,600 seconds, so set
 them explicitly for a short loop. Changes arrive on the next successful poll;
@@ -158,9 +164,23 @@ saved playlist.
 ### 4. Add more displays
 
 Repeat the installation and pairing steps on each Pi, using the **same server
-URL**. Give each display a distinct name and configure its playlist in the
+URL**. Give each display a distinct name and select its playlist in the
 dashboard. Each Pi needs its own identity: do not copy an already-paired device's
 `~/.local/state/pisign` directory into another device's image.
+
+### Upgrading from per-display playlists
+
+The database migration combines each account's existing URLs into a playlist
+named `default` and assigns all of that account's existing displays to it.
+URLs retain their titles, durations, QR settings, and order within each former
+display playlist; those playlists are concatenated in display creation order.
+Duplicate URLs are kept. You can then create separate playlists and reassign
+displays as needed. The player API still returns a single URL list, so no player
+update is required for shared playlists.
+
+Resetting/unpairing or revoking a display leaves saved playlists and other
+displays unchanged. A playlist can be deleted only after it is no longer assigned
+to any display.
 
 ### Updates and recovery
 
@@ -185,18 +205,18 @@ settings page to see whether the restarted player has reconnected.
 Existing players need the one-time manual update above to support this action;
 their desktop or X11 launchers do not need changing.
 
-Use **Reset / unpair** in display settings to remotely delete its playlist and
+Use **Reset / unpair** in display settings to remotely delete its cached playlist and
 browser cookies, release it from your account, and show a fresh pairing code.
 Confirm the destructive action before submitting. Offline or older players
 remain pending until the ten-minute delivery expiry; update players first.
 The player keeps its server-bound credential to pair again without physical
 access. This is the normal action for transferring, retiring, or re-pairing a
-working display.
+working display. Saved account-level playlists and other displays are unchanged.
 
 For a lost, stolen, or compromised device, expand **Advanced settings** and choose
 **Revoke device access**. This immediately revokes its server credential and
-deletes the server entry and playlist without waiting for the player to
-cooperate. Browser cookies are not remotely erased.
+deletes the display's server entry without waiting for the player to cooperate.
+Saved playlists are kept; browser cookies are not remotely erased.
 
 To change servers or recover after access revocation, stop the player, remove its old display
 entry in the dashboard, then reset it locally and pair again:
