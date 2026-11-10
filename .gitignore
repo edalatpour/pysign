@@ -10,3 +10,4 @@ build/
 dist/
 staticfiles/
 private-assets/
+pisign-wifi.json

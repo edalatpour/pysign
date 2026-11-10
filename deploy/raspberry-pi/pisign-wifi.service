@@ -1,0 +1,17 @@
+[Unit]
+Description=Import PiSign Wi-Fi settings from the SD card
+Wants=NetworkManager.service
+After=local-fs.target NetworkManager.service
+Before=display-manager.service getty@tty1.service
+ConditionPathExists=/boot/firmware/pisign-wifi.json
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -I /usr/local/lib/pisign/wifi.py
+TimeoutStartSec=240
+UMask=0077
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target

@@ -5,6 +5,7 @@ import time
 from .browser import BrowserError, BrowserTimeout
 from .client import ResetRequested, RestartRequested, restart_pending, validate_config
 from .storage import read_json, write_json
+from .wifi import FAILURE_MESSAGE, STATUS_DIRECTORY
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +74,10 @@ def run_player(browser, worker, state_dir, server):
                 if fatal:
                     browser.status("Player stopped", fatal)
                 elif config is None:
-                    browser.status("Connecting to PiSign", "Waiting for the server.\nCheck the network connection.")
+                    if (STATUS_DIRECTORY / "failed").exists():
+                        browser.status("Wi-Fi setup failed", FAILURE_MESSAGE)
+                    else:
+                        browser.status("Connecting to PiSign", "Waiting for the server.\nCheck the network connection.")
                 elif config["state"] == "unpaired":
                     code = config.get("code")
                     if code:
