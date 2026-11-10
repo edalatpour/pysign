@@ -29,6 +29,7 @@ urlpatterns = [
     path("playlists/<int:playlist_id>/slides/<int:slide_id>/remove/", views.remove_slide, name="remove-slide"),
     path("api/devices/register/", api.register, name="api-register"),
     path("api/device/config/", api.config, name="api-config"),
+    path("api/device/releases/<int:sequence>/", api.release_content, name="api-release"),
     path("api/device/assets/<uuid:asset_id>/", api.asset_content, name="api-asset"),
     path("api/device/restarts/<uuid:request_id>/completed/", api.restart_completed, name="api-restart-completed"),
     path("api/device/resets/<uuid:request_id>/completed/", api.reset_completed, name="api-reset-completed"),

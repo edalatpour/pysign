@@ -11,6 +11,8 @@
     <h2>{{ device.name }}</h2>
     <p class="muted">Playlist: {{ device.playlist.name|default:"Not assigned" }}</p>
     <p class="muted">Last seen: {{ device.last_seen|date:"M j, H:i"|default:"Never" }} UTC</p>
+    <p class="muted">Player: {{ device.player_update.installed_version|default:"Unknown (bootstrap required)" }}
+      {% if device.player_update.status %}/ {{ device.player_update.status }}{% endif %}</p>
     <span class="text-link">Manage display &rarr;</span>
   </a>
 {% empty %}

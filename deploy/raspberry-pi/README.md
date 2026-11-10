@@ -28,6 +28,8 @@ The installer checks prerequisites, copies the standalone importer to
 player as root, or grant the player permission to change networking. Rerun the
 installer after updating importer code; it deliberately does not execute code
 from the player's user-writable checkout or virtualenv as root.
+The [remote player updater](UPDATES.md) does not cross this installation boundary:
+it cannot replace the root-owned importer, service unit, OS or Chromium.
 
 For a reusable image, install this service **before capturing the image**, and
 do not include any device pairing state, Chromium profile, Wi-Fi credentials,

@@ -4,6 +4,7 @@ from pathlib import Path
 from django.core.exceptions import ImproperlyConfigured
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+PLAYER_RELEASE_PUBLIC_KEY = os.environ.get("PISIGN_PLAYER_RELEASE_PUBLIC_KEY", "")
 DEBUG = os.environ.get("PISIGN_DEBUG", "0") == "1"
 SECRET_KEY = os.environ.get("PISIGN_SECRET_KEY", "")
 if not SECRET_KEY:

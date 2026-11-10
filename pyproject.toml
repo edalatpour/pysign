@@ -20,7 +20,7 @@ server = [
     "azure-storage-blob>=12.26,<13",
     "azure-identity>=1.25,<2",
 ]
-player = ["websocket-client>=1.8,<2", "segno>=1.6,<2"]
+player = ["websocket-client==1.8.0", "segno==1.6.6"]
 production = ["gunicorn>=23,<24", "psycopg[binary]>=3.2,<4"]
 azure-sql = [
     "mssql-django>=1.8,<2",
