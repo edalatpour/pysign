@@ -1,4 +1,5 @@
 import logging
+import os
 import queue
 import time
 
@@ -50,6 +51,7 @@ def run_player(browser, worker, state_dir, server):
     fatal = None
     restart = None
     reset = None
+    health_written = 0
     try:
         while True:
             try:
@@ -117,6 +119,11 @@ def run_player(browser, worker, state_dir, server):
                     rotation.deadline = 0
                 if fatal is None and browser.process is not None and browser.process.poll() is None:
                     worker.ready.set()
+                    if os.environ.get("PISIGN_HEALTH_ID") and time.monotonic() - health_written >= 1:
+                        write_json(state_dir / "startup-health.json", {
+                            "id": os.environ["PISIGN_HEALTH_ID"], "time": time.monotonic(),
+                        })
+                        health_written = time.monotonic()
             except BrowserError as exc:
                 logger.exception("%s Restarting Chromium in five seconds.", exc)
                 browser.close()

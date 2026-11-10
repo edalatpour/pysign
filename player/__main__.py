@@ -4,6 +4,7 @@ import logging
 import os
 import shlex
 import shutil
+import signal
 import socket
 import sys
 from pathlib import Path
@@ -16,7 +17,7 @@ from .storage import private_directory, reset_state
 
 def parser():
     result = argparse.ArgumentParser(description="PiSign Raspberry Pi Chromium player")
-    result.add_argument("command", choices=["run", "install-autostart", "reset"])
+    result.add_argument("command", choices=["run", "install-autostart", "install-updater", "reset"])
     result.add_argument("--server", help="Server origin, for example https://signage.example.com")
     result.add_argument("--state-dir", type=Path, default=Path.home() / ".local/state/pisign")
     result.add_argument("--name", default=socket.gethostname()[:100])
@@ -25,19 +26,22 @@ def parser():
                         help="Use CPU rendering for framebuffer/X11 kiosks (slower)")
     result.add_argument("--allow-http", action="store_true", help="Development only: allow an unencrypted server")
     result.add_argument("--yes", action="store_true", help="Confirm destructive local credential reset")
+    result.add_argument("--public-key", type=Path, help="Trusted platform release Ed25519 public key")
+    result.add_argument("--update-dir", type=Path, default=Path.home() / ".local/share/pisign-updater")
     return result
 
 
-def install_autostart(args, server):
+def install_autostart(args, server, arguments=None):
     executable = str(Path(sys.executable).absolute())
-    arguments = [executable, "-m", "player", "run", "--server", server,
+    arguments = arguments or [executable, "-m", "player", "run", "--server", server,
                  "--state-dir", str(args.state_dir.resolve()), "--name", args.name]
-    if args.browser:
-        arguments += ["--browser", args.browser]
-    if args.software_rendering:
-        arguments += ["--software-rendering"]
-    if args.allow_http:
-        arguments += ["--allow-http"]
+    if args.command != "install-updater":
+        if args.browser:
+            arguments += ["--browser", args.browser]
+        if args.software_rendering:
+            arguments += ["--software-rendering"]
+        if args.allow_http:
+            arguments += ["--allow-http"]
     # Desktop Entry quoting is not shell quoting; escape its reserved characters.
     command = " ".join(
         '"' + value.replace("\\", "\\\\").replace('"', '\\"').replace("`", "\\`")
@@ -77,6 +81,11 @@ def main():
     args = parser().parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     os.umask(0o077)
+    if args.command == "run":
+        def terminate(signum, frame):
+            raise KeyboardInterrupt
+
+        signal.signal(signal.SIGTERM, terminate)
     args.state_dir = private_directory(args.state_dir)
     restart = False
     with (args.state_dir / "player.lock").open("a") as lock:
@@ -94,6 +103,24 @@ def main():
             raise SystemExit("--server is required.")
         try:
             server = server_url(args.server, args.allow_http)
+            if args.command == "install-updater":
+                from .updater import bootstrap
+
+                if not args.public_key:
+                    raise ValueError("--public-key is required for updater bootstrap.")
+                arguments = ["run", "--server", server, "--state-dir", str(args.state_dir),
+                             "--name", args.name]
+                if args.browser:
+                    arguments += ["--browser", str(Path(args.browser).resolve())]
+                if args.software_rendering:
+                    arguments += ["--software-rendering"]
+                bootstrap(args.update_dir, args.state_dir, server, arguments, args.public_key)
+                # The supervisor uses the OS Python, not the replaceable checkout's venv.
+                supervisor = ["/usr/bin/python3", str(args.update_dir.resolve() / "updater.py"),
+                              "--home", str(args.update_dir.resolve())]
+                install_autostart(args, server, supervisor)
+                print("Updater bootstrapped. Reboot to start supervised playback.")
+                return
             if args.command == "install-autostart":
                 install_autostart(args, server)
                 return

@@ -9,10 +9,10 @@ from django.http import JsonResponse, Http404
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
-from django.views.decorators.http import require_GET, require_POST, require_http_methods
+from django.views.decorators.http import require_POST, require_http_methods
 
 from .assets import content_response
-from .models import Asset, Device, PlayerReset, PlayerRestart
+from .models import Asset, Device, PlayerRelease, PlayerReset, PlayerRestart
 from .security import allow_request, digest_token
 
 PAIRING_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
@@ -72,13 +72,39 @@ def register(request):
     return response
 
 
-@require_GET
+@csrf_exempt
+@require_http_methods(["GET", "POST"])
 @device_required
 def config(request):
     device = request.device
-    Device.objects.filter(pk=device.pk).update(last_seen=timezone.now())
+    updates = {"last_seen": timezone.now()}
+    if request.method == "POST":
+        try:
+            data = json.loads(request.body)
+            report = data["update"]
+            if not isinstance(report, dict) or set(report) != {
+                "installed_version", "installed_sequence", "status", "error", "target_version", "updater_protocol",
+            }:
+                raise ValueError
+            for key, limit in (("installed_version", 64), ("target_version", 64), ("error", 1000)):
+                if not isinstance(report[key], str) or len(report[key]) > limit:
+                    raise ValueError
+            if report["status"] not in {
+                "idle", "staging", "starting", "installed", "failed", "rolled_back", "incompatible", "retrying",
+            }:
+                raise ValueError
+            if type(report["installed_sequence"]) is not int or not 0 <= report["installed_sequence"] <= 2147483647:
+                raise ValueError
+            if type(report["updater_protocol"]) is not int or report["updater_protocol"] != 1:
+                raise ValueError
+        except (ValueError, KeyError, TypeError, UnicodeDecodeError):
+            return JsonResponse({"error": "Invalid player update report."}, status=400)
+        updates.update(player_update=report, update_reported_at=timezone.now())
+    Device.objects.filter(pk=device.pk).update(**updates)
+    release = PlayerRelease.objects.first()
+    metadata = {"release": release.envelope} if release else {}
     if device.owner_id is None:
-        return JsonResponse({"state": "unpaired", "slides": []})
+        return JsonResponse({"state": "unpaired", "slides": [], **metadata})
     if device.playlist_id and device.playlist.owner_id != device.owner_id:
         logger.error("Device %s has a playlist owned by a different account.", device.pk)
     slides = []
@@ -97,6 +123,7 @@ def config(request):
     result = {
         "state": "paired", "name": device.name,
         "slides": slides,
+        **metadata,
     }
     reset = PlayerReset.objects.filter(
         device=device, completed_at__isnull=True, expires_at__gt=timezone.now(),
@@ -106,8 +133,6 @@ def config(request):
             "id": str(reset.request_id), "expires_at": reset.expires_at.isoformat(),
         }
         return JsonResponse(result)
-
-
     restart = PlayerRestart.objects.filter(
         device=device, completed_at__isnull=True, expires_at__gt=timezone.now(),
     ).first()
@@ -116,6 +141,13 @@ def config(request):
             "id": str(restart.request_id), "expires_at": restart.expires_at.isoformat(),
         }
     return JsonResponse(result)
+
+
+@require_http_methods(["GET", "HEAD"])
+@device_required
+def release_content(request, sequence):
+    release = get_object_or_404(PlayerRelease, sequence=sequence)
+    return content_response(request, release)
 
 
 @require_http_methods(["GET", "HEAD"])

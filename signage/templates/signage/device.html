@@ -32,6 +32,19 @@
   </section>
   <aside>
     <section class="card">
+      <h2>Player updates</h2>
+      {% if device.update_reported_at %}
+        <p>Installed: {{ device.player_update.installed_version }} ({{ device.player_update.installed_sequence }})</p>
+        <p role="status">{{ device.player_update.status }} / Target: {{ device.player_update.target_version }}</p>
+        {% if device.player_update.error %}<p role="alert">{{ device.player_update.error }}</p>{% endif %}
+        <p class="muted">Last reported: {{ device.update_reported_at }} UTC. Offline reports may be stale.</p>
+      {% else %}
+        <p class="muted">Version unknown. This player needs the one-time updater bootstrap.</p>
+      {% endif %}
+      <p class="muted">Platform releases update all enrolled players on their next successful poll.
+        No account approval is needed. OS, Chromium and privileged Wi-Fi service updates are separate.</p>
+    </section>
+    <section class="card">
       <h2>Restart player</h2>
       <p class="muted">Restarts PiSign and Chromium, not the Pi. Pairing, playlist, and browser cookies are kept. Requires a player with remote restart support.</p>
       {% if restart %}

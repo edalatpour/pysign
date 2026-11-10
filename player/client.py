@@ -276,7 +276,13 @@ class ConfigWorker(threading.Thread):
                     write_json(self.state_dir / "reset.json", updated)
                     self.reset_receipt = updated
                     logger.info("Player reset %s acknowledgement: %s.", receipt["id"], result["status"])
-                response = self.api.call("/api/device/config/", token=token)
+                if os.environ.get("PISIGN_UPDATE_HOME"):
+                    status = read_json(self.state_dir / "update-status.json")
+                    response = self.api.call("/api/device/config/", token=token, data={"update": status})
+                    if "release" in response:
+                        write_json(self.state_dir / "desired-release.json", response["release"])
+                else:
+                    response = self.api.call("/api/device/config/", token=token)
                 if self.stopping.is_set():
                     return
                 config = validate_config(response)

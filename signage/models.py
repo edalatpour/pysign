@@ -47,6 +47,8 @@ class Device(models.Model):
     pairing_expires_at = models.DateTimeField(null=True, editable=False)
     last_seen = models.DateTimeField(null=True, editable=False)
     created_at = models.DateTimeField(auto_now_add=True)
+    player_update = models.JSONField(default=dict, blank=True)
+    update_reported_at = models.DateTimeField(null=True, editable=False)
 
     class Meta:
         ordering = ["name", "created_at"]
@@ -79,6 +81,29 @@ class Asset(models.Model):
     @property
     def is_video(self):
         return self.content_type.startswith("video/")
+
+
+class PlayerRelease(models.Model):
+    sequence = models.PositiveIntegerField(primary_key=True)
+    version = models.CharField(max_length=64, unique=True)
+    envelope = models.JSONField()
+    content_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    published_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-sequence"]
+
+    @property
+    def storage_key(self):
+        return f"releases/{self.content_id}"
+
+    @property
+    def size(self):
+        return self.envelope["manifest"]["size"]
+
+    @property
+    def content_type(self):
+        return "application/gzip"
 
 
 class Slide(models.Model):

@@ -236,14 +236,18 @@ to any display.
 
 ### Updates and recovery
 
-To update a player, stop it, run the following from its checkout, then reboot:
+For remote updates, install the independent updater once using the
+[bootstrap and release guide](deploy/raspberry-pi/UPDATES.md). The platform owner
+publishes signed, versioned releases to all enrolled devices automatically.
+Online devices receive them on their next successful poll; offline devices
+receive the latest release when they reconnect. No account-admin approval or
+inbound SSH is required. Releases stage in separate environments, check
+compatibility and startup health, and roll back failed startup without resetting
+player state. Installed versions and update errors appear in display settings.
+Do not run live `git pull` updates on a supervised player.
 
-```sh
-cd "$HOME/pysign"
-git pull --ff-only
-.venv/bin/python -m pip install -e '.[player]'
-sudo reboot
-```
+OS, Chromium, and the separately installed root-owned Wi-Fi importer remain
+outside remote player updates.
 
 Pairing, cached playlists, and the Chromium profile are stored in
 `~/.local/state/pisign`. Chromium diagnostics are in `chromium.log` there;
@@ -254,8 +258,8 @@ using **Restart player**. This restarts PiSign and Chromium, not the Pi, and kee
 pairing, the cached playlist, and browser cookies. Requests expire after ten
 minutes; an offline or older player remains pending until expiry. Refresh the
 settings page to see whether the restarted player has reconnected.
-Existing players need the one-time manual update above to support this action;
-their desktop or X11 launchers do not need changing.
+Existing players need current player code to support this action. Remote update
+installation additionally needs the one-time supervisor bootstrap above.
 
 Use **Reset / unpair** in display settings to remotely delete its cached playlist and
 browser cookies, release it from your account, and show a fresh pairing code.
