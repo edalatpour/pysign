@@ -298,6 +298,13 @@ desktop with desktop auto-login, or the minimal Lite kiosk described below.
 Lite alone cannot display a browser; install/configure X first. A 32-bit OS is a practical choice for the
 Zero 2 W's 512 MB RAM. The player runs as the ordinary desktop user, **not root**.
 
+For initial networking or moving between Wi-Fi networks without a local setup
+website, install the optional [SD-card Wi-Fi import service](../deploy/raspberry-pi/README.md)
+on the Pi or base image. It reads `pisign-wifi.json` from `/boot/firmware` on boot,
+uses NetworkManager, and leaves player identity and cached content unchanged.
+The privileged importer is separate from the player; a normal player install
+alone does not enable it.
+
 The player passes `--no-memcheck` to skip Raspberry Pi OS Chromium's interactive
 low-memory warning, which otherwise blocks unattended startup on a Zero 2 W.
 This only suppresses the launcher dialog; it does not reduce Chromium's memory

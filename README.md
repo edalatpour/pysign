@@ -123,6 +123,17 @@ The project requires Python 3.10 or newer. Some older Raspberry Pi OS releases
 call the Chromium package `chromium-browser`; the player detects either
 executable.
 
+### Optional: configure Wi-Fi from the SD card
+
+On a prepared PiSign image, create `pisign-wifi.json` on the SD card's visible
+boot partition with your `ssid`, `password`, and two-letter `country` code.
+The Pi imports it on boot and removes it after connecting. To change networks,
+shut down safely and add a new file to the same card; pairing and cached content
+are preserved. This requires a one-time service installation on the Pi or base
+image, not just a stock Raspberry Pi OS image. See
+[SD-card Wi-Fi setup and recovery](deploy/raspberry-pi/README.md) for installation,
+the JSON example, supported networks, and credential precautions.
+
 ### 2. Start and pair the display
 
 Replace `https://signage.example.com` with your server's HTTPS origin, without
