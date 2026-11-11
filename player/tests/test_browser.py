@@ -62,12 +62,32 @@ class BrowserWatermarkTests(unittest.TestCase):
     def test_software_rendering_disables_gpu_rasterization_and_keeps_sandbox(self):
         self.browser = Browser(self.browser.state_dir, executable="chromium", software_rendering=True)
         self.addCleanup(self.browser.close)
-        self.start_browser()
+        with patch("player.browser.sys.platform", "linux"):
+            self.start_browser()
         for flag in ["--disable-gpu", "--disable-gpu-compositing", "--disable-gpu-rasterization",
                      "--ozone-platform=x11"]:
             self.assertIn(flag, self.launch_arguments)
         self.assertNotIn("--no-sandbox", self.launch_arguments)
         self.assertEqual(self.launch_arguments[-1], "about:blank")
+
+    def test_windows_software_rendering_does_not_use_x11(self):
+        self.browser = Browser(self.browser.state_dir, executable="chromium", software_rendering=True)
+        self.addCleanup(self.browser.close)
+        with patch("player.browser.sys.platform", "win32"):
+            self.start_browser()
+        self.assertIn("--disable-gpu", self.launch_arguments)
+        self.assertNotIn("--ozone-platform=x11", self.launch_arguments)
+
+    def test_windows_close_requests_browser_shutdown_before_termination(self):
+        socket = self.start_browser()
+        process = self.browser.process
+        process.poll.side_effect = [None, 0]
+        with patch("player.browser.sys.platform", "win32"):
+            self.browser.close()
+        self.assertEqual(json.loads(socket.send.call_args.args[0])["method"], "Browser.close")
+        process.wait.assert_called_once_with(timeout=5)
+        process.terminate.assert_not_called()
+        socket.close.assert_called_once()
 
     def test_watermark_is_registered_before_navigation_in_isolated_world(self):
         socket = self.start_browser()

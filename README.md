@@ -287,6 +287,54 @@ If the server URL changed, rerun `install-autostart` with the new URL too.
 For framebuffer/software rendering, detailed logs, and alternative setups,
 see the [player reference](docs/reference.md#raspberry-pi-player).
 
+## On-demand player testing on Windows and macOS
+
+These are development/test players, not unattended kiosks. Connect to the
+network normally; the Raspberry Pi's SD-card Wi-Fi setup does not apply.
+Install Git, Python 3.10 or newer, and Chrome or Chromium. Use an ordinary
+user account with an active graphical session. Do not share that account's
+player state: it contains the device credential and browser cookies.
+
+On Windows, in PowerShell, from the checkout:
+
+```powershell
+py -3 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e '.[player]'
+.\.venv\Scripts\python.exe -m player run --server https://signage.example.com
+```
+
+The player searches standard Chrome and Microsoft Edge locations and then
+`PATH`. If needed, specify a Chromium-based browser explicitly, for example:
+
+```powershell
+.\.venv\Scripts\python.exe -m player run --server https://signage.example.com `
+  --browser "C:\Program Files\Google\Chrome\Application\chrome.exe"
+```
+
+On macOS, in Terminal, from the checkout:
+
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install -e '.[player]'
+.venv/bin/python -m player run --server https://signage.example.com \
+  --browser "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+```
+
+Replace the example server and browser paths with your own. The player opens a
+kiosk window and displays a pairing code; claim it in the dashboard as described
+above. Press Ctrl+C in the terminal to stop it. The default state directory is
+`%USERPROFILE%\.local\state\pisign` on Windows and `~/.local/state/pisign` on
+macOS. Pass `--state-dir` to isolate test devices. On Windows, the state
+directory and credential file are restricted to the current Windows user and
+SYSTEM; administrators and processes running as that user remain trusted.
+Use a local filesystem supporting Windows access control.
+
+To update either test player, stop it, run `git pull --ff-only` in the checkout,
+repeat the corresponding `pip install -e '.[player]'` command, and start it
+again. Windows and macOS do not use the Raspberry Pi signed updater or its
+autostart commands. Remote restart on Windows restarts playback within the
+running process; stop and start the player to load newly pulled code.
+
 ## Playback and security essentials
 
 PiSign displays actual web pages, not iframe embeds. Kiosk mode does not bypass

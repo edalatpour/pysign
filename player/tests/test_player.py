@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import unittest
 import uuid
@@ -14,6 +15,7 @@ from player.client import (
     server_url, validate_config, validate_restart,
 )
 from player.runtime import Rotation, cached_config, run_player
+from player.locking import player_lock
 from player.storage import private_directory, read_json, reset_state, write_json
 
 
@@ -79,8 +81,9 @@ class PlayerTests(unittest.TestCase):
         path = self.state / "credentials.json"
         write_json(path, {"token": "secret"})
         self.assertEqual(read_json(path), {"token": "secret"})
-        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
-        self.assertEqual(self.state.stat().st_mode & 0o777, 0o700)
+        if os.name != "nt":
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(self.state.stat().st_mode & 0o777, 0o700)
         self.assertEqual(sorted(p.name for p in self.state.iterdir()), ["credentials.json"])
 
     def test_http_and_credential_urls_are_rejected(self):
@@ -371,13 +374,13 @@ class PlayerTests(unittest.TestCase):
         original = ["/opt/venv/bin/python", "-u", "-m", "player", *arguments]
 
         def reexec(executable, argv):
-            import fcntl
-            with (self.state / "player.lock").open("a") as lock:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            with player_lock(self.state / "player.lock"):
+                pass
             self.assertEqual(executable, original[0])
             self.assertEqual(argv, original)
 
         with patch("player.__main__.sys.argv", ["player", *arguments]), \
+                patch("player.__main__.sys.platform", "linux"), \
                 patch("player.__main__.sys.orig_argv", original), \
                 patch("player.__main__.sys.executable", original[0]), \
                 patch("player.__main__.Browser"), \
@@ -573,7 +576,7 @@ class PlayerTests(unittest.TestCase):
         args = parser().parse_args(["run"])
         self.assertEqual(args.state_dir, Path.home() / ".local/state/pisign")
         self.assertFalse(args.software_rendering)
-        self.assertIn("PiSign Raspberry Pi Chromium player", parser().format_help())
+        self.assertIn("PiSign Chromium player", parser().format_help())
 
     def test_run_passes_software_rendering_to_browser(self):
         arguments = ["pisign-player", "run", "--server", self.server,
@@ -586,6 +589,7 @@ class PlayerTests(unittest.TestCase):
         browser.assert_called_once_with(self.state, None, software_rendering=True)
         run.assert_called_once_with(browser.return_value, worker.return_value, self.state, self.server)
 
+    @unittest.skipIf(os.name == "nt", "Linux autostart is not supported on Windows")
     def test_autostart_preserves_software_rendering_and_custom_browser(self):
         home = Path(self.temporary.name)
         args = parser().parse_args([
@@ -603,6 +607,7 @@ class PlayerTests(unittest.TestCase):
         self.assertIn("/opt/custom/chromium", launcher)
         self.assertIn("start-player", (home / ".config/labwc/autostart").read_text())
 
+    @unittest.skipIf(os.name == "nt", "Linux autostart is not supported on Windows")
     def test_autostart_preserves_virtualenv_and_labwc_configuration(self):
         home = Path(self.temporary.name)
         labwc = home / ".config/labwc"

@@ -1,6 +1,7 @@
 import logging
 import os
 import queue
+import sys
 import time
 
 from .browser import BrowserError, BrowserTimeout
@@ -76,7 +77,7 @@ def run_player(browser, worker, state_dir, server):
                 if fatal:
                     browser.status("Player stopped", fatal)
                 elif config is None:
-                    if (STATUS_DIRECTORY / "failed").exists():
+                    if sys.platform.startswith("linux") and (STATUS_DIRECTORY / "failed").exists():
                         browser.status("Wi-Fi setup failed", FAILURE_MESSAGE)
                     else:
                         browser.status("Connecting to PiSign", "Waiting for the server.\nCheck the network connection.")

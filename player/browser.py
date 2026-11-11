@@ -5,8 +5,10 @@ import logging
 import os
 import shutil
 import subprocess
+import sys
 import time
 from importlib.resources import files
+from pathlib import Path
 from urllib.request import ProxyHandler, build_opener
 from xml.etree import ElementTree
 
@@ -41,13 +43,32 @@ class BrowserTimeout(BrowserError):
     pass
 
 
+def find_browser():
+    if sys.platform == "win32":
+        for root, relative in (
+            ("PROGRAMFILES", r"Google\Chrome\Application\chrome.exe"),
+            ("PROGRAMFILES(X86)", r"Google\Chrome\Application\chrome.exe"),
+            ("LOCALAPPDATA", r"Google\Chrome\Application\chrome.exe"),
+            ("PROGRAMFILES(X86)", r"Microsoft\Edge\Application\msedge.exe"),
+            ("PROGRAMFILES", r"Microsoft\Edge\Application\msedge.exe"),
+            ("LOCALAPPDATA", r"Microsoft\Edge\Application\msedge.exe"),
+        ):
+            base = os.environ.get(root)
+            if base:
+                candidate = Path(base) / relative
+                if candidate.is_file():
+                    return str(candidate)
+        return shutil.which("chrome") or shutil.which("msedge") or shutil.which("chromium")
+    return shutil.which("chromium") or shutil.which("chromium-browser")
+
+
 class Browser:
     def __init__(self, state_dir, executable=None, software_rendering=False):
         self.state_dir = state_dir
         self.software_rendering = software_rendering
-        self.executable = executable or shutil.which("chromium") or shutil.which("chromium-browser")
+        self.executable = executable or find_browser()
         if not self.executable:
-            raise BrowserError("Install Chromium first, or pass --browser /path/to/chromium.")
+            raise BrowserError("Install a Chromium-based browser, or pass its executable path with --browser.")
         self.process = None
         self.socket = None
         self.counter = 0
@@ -68,10 +89,12 @@ class Browser:
         environment = os.environ.copy()
         self.log = (self.state_dir / "chromium.log").open("a", encoding="utf-8")
         try:
-            rendering_arguments = [
-                "--disable-gpu", "--disable-gpu-compositing", "--disable-gpu-rasterization",
-                "--ozone-platform=x11",
-            ] if self.software_rendering else []
+            rendering_arguments = (
+                ["--disable-gpu", "--disable-gpu-compositing", "--disable-gpu-rasterization"]
+                if self.software_rendering else []
+            )
+            if self.software_rendering and sys.platform.startswith("linux"):
+                rendering_arguments.append("--ozone-platform=x11")
             self.process = subprocess.Popen([
                 self.executable, *rendering_arguments,
                 "--no-memcheck", "--kiosk", "--no-first-run", "--no-default-browser-check",
@@ -272,6 +295,15 @@ class Browser:
         self.current_url = None
         self.qr_checked_at = 0
         self.qr_location = None
+        if sys.platform == "win32" and self.socket and self.process and self.process.poll() is None:
+            import websocket
+
+            try:
+                self.counter += 1
+                self.socket.send(json.dumps({"id": self.counter, "method": "Browser.close", "params": {}}))
+                self.process.wait(timeout=5)
+            except (OSError, websocket.WebSocketException, subprocess.TimeoutExpired) as exc:
+                logger.warning("Could not close the browser gracefully: %s", exc)
         if self.socket:
             self.socket.close()
             self.socket = None

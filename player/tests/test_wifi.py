@@ -343,6 +343,7 @@ class WifiTests(unittest.TestCase):
                 worker.updates.get_nowait.side_effect = queue.Empty
                 browser.process.poll.return_value = None
                 with patch("player.runtime.STATUS_DIRECTORY", self.status), \
+                        patch("player.runtime.sys.platform", "linux"), \
                         patch("player.runtime.time.sleep", side_effect=KeyboardInterrupt):
                     with self.assertRaises(KeyboardInterrupt):
                         run_player(browser, worker, state, "https://example.com")

@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -11,6 +12,17 @@ from pathlib import Path
 from textwrap import dedent
 
 from player.storage import private_directory, read_json, write_json
+
+
+def launch_harness(script, arguments):
+    executable = sys._base_executable if os.name == "nt" else sys.executable
+    environment = os.environ.copy()
+    root = str(Path(__file__).resolve().parents[2])
+    environment["PYTHONPATH"] = os.pathsep.join(filter(None, (root, environment.get("PYTHONPATH"))))
+    return subprocess.Popen(
+        [executable, "-u", str(script), *arguments], env=environment,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+    )
 
 
 HARNESS = """
@@ -49,7 +61,11 @@ class Browser:
 
 entry.Browser = Browser
 entry.ConfigWorker = lambda *args: ConfigWorker(*args, interval=0.05)
-event("launch")
+run_once = entry.run_once
+def traced_run():
+    event("launch")
+    return run_once()
+entry.run_once = traced_run
 entry.main()
 """
 
@@ -134,10 +150,7 @@ class RestartIntegrationTests(unittest.TestCase):
             script = Path(directory) / "player_harness.py"
             script.write_text(dedent(HARNESS))
             arguments = ["run", "--server", origin, "--allow-http", "--state-dir", str(state)]
-            process = subprocess.Popen(
-                [sys.executable, "-u", str(script), *arguments],
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            )
+            process = launch_harness(script, arguments)
             try:
                 self.assertTrue(paired_again.wait(timeout=8), "Reset did not return to pairing.")
                 self.assertIsNone(process.poll())
@@ -239,10 +252,7 @@ class RestartIntegrationTests(unittest.TestCase):
                 "run", "--server", origin, "--allow-http", "--state-dir", str(state),
                 "--name", "Lobby", "--software-rendering", "--browser", "/opt/chromium",
             ]
-            process = subprocess.Popen(
-                [sys.executable, "-u", str(script), *arguments],
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            )
+            process = launch_harness(script, arguments)
             try:
                 self.assertTrue(replayed.wait(timeout=8), "Restart did not reconnect and acknowledge.")
                 self.assertIsNone(process.poll(), "Player exited instead of continuing playback.")

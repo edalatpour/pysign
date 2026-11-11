@@ -1,5 +1,4 @@
 import argparse
-import fcntl
 import logging
 import os
 import shlex
@@ -11,12 +10,13 @@ from pathlib import Path
 
 from .browser import Browser, BrowserError
 from .client import ConfigWorker, ResetRequested, RestartRequested, command_receipt, server_url
+from .locking import player_lock
 from .runtime import run_player
 from .storage import private_directory, reset_state
 
 
 def parser():
-    result = argparse.ArgumentParser(description="PiSign Raspberry Pi Chromium player")
+    result = argparse.ArgumentParser(description="PiSign Chromium player")
     result.add_argument("command", choices=["run", "install-autostart", "install-updater", "reset"])
     result.add_argument("--server", help="Server origin, for example https://signage.example.com")
     result.add_argument("--state-dir", type=Path, default=Path.home() / ".local/state/pisign")
@@ -77,7 +77,7 @@ def install_autostart(args, server, arguments=None):
     print("Enable desktop auto-login with sudo raspi-config. Run the player as this user, never root.")
 
 
-def main():
+def run_once():
     args = parser().parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     os.umask(0o077)
@@ -88,11 +88,12 @@ def main():
         signal.signal(signal.SIGTERM, terminate)
     args.state_dir = private_directory(args.state_dir)
     restart = False
-    with (args.state_dir / "player.lock").open("a") as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            raise SystemExit("Another player is running. Stop it before changing its state.")
+    try:
+        lock = player_lock(args.state_dir / "player.lock")
+        lock.__enter__()
+    except BlockingIOError:
+        raise SystemExit("Another player is running. Stop it before changing its state.")
+    try:
         if args.command == "reset":
             if not args.yes:
                 raise SystemExit("Reset discards local credentials and cached content. Confirm with --yes.")
@@ -102,6 +103,8 @@ def main():
         if not args.server:
             raise SystemExit("--server is required.")
         try:
+            if args.command in ("install-autostart", "install-updater") and sys.platform != "linux":
+                raise ValueError(f"{args.command} is only supported on Linux; run the player manually.")
             server = server_url(args.server, args.allow_http)
             if args.command == "install-updater":
                 from .updater import bootstrap
@@ -142,12 +145,20 @@ def main():
             raise SystemExit(str(exc)) from exc
         except KeyboardInterrupt:
             pass
-    if restart:
-        try:
-            os.execv(sys.executable, [sys.executable, *sys.orig_argv[1:]])
-        except OSError as exc:
-            logging.exception("Could not re-execute the player.")
-            raise SystemExit(f"Player restart failed: {exc}") from exc
+    finally:
+        lock.__exit__(None, None, None)
+    return restart
+
+
+def main():
+    while run_once():
+        if sys.platform != "win32":
+            try:
+                os.execv(sys.executable, [sys.executable, *sys.orig_argv[1:]])
+            except OSError as exc:
+                logging.exception("Could not re-execute the player.")
+                raise SystemExit(f"Player restart failed: {exc}") from exc
+            return
 
 
 if __name__ == "__main__":

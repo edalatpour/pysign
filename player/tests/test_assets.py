@@ -1,5 +1,6 @@
 import hashlib
 import io
+import os
 import tempfile
 import threading
 import unittest
@@ -47,7 +48,8 @@ class PlayerAssetTests(unittest.TestCase):
         api = self.api()
         api.download_asset(self.asset, "device-secret", self.target, self.stopping)
         self.assertEqual(self.target.read_bytes(), b"png")
-        self.assertEqual(self.target.stat().st_mode & 0o777, 0o600)
+        if os.name != "nt":
+            self.assertEqual(self.target.stat().st_mode & 0o777, 0o600)
         request = api.opener.open.call_args.args[0]
         self.assertEqual(request.get_header("Authorization"), "Bearer device-secret")
         self.assertEqual(request.full_url, f"https://signage.example.com/api/device/assets/{self.asset['id']}/")
