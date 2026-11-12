@@ -29,7 +29,7 @@ def watermark_script():
         }
 
     logo = ElementTree.fromstring(
-        files("pisign").joinpath("static/pisign/brand/logo-dark.svg").read_text(encoding="utf-8"),
+        files("player").joinpath("logo-dark.svg").read_text(encoding="utf-8"),
     )
     script = files("player").joinpath("watermark.js").read_text(encoding="utf-8")
     return f"({script})({json.dumps(element(logo))});"
@@ -269,7 +269,7 @@ class Browser:
         path = self.state_dir / "status.html"
         if content != self.status_content:
             logo = base64.b64encode(
-                files("pisign").joinpath("static/pisign/brand/logo-dark.svg").read_bytes()
+                files("player").joinpath("logo-dark.svg").read_bytes()
             ).decode("ascii")
             path.write_text(
                 '<!doctype html><meta charset="utf-8">'

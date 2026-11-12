@@ -53,7 +53,7 @@ def main():
         source = Path(__file__).resolve().parent.parent / "player"
         with tarfile.open(archive, "x:gz") as output:
             for path in sorted(source.iterdir()):
-                if path.is_file() and (path.suffix == ".py" or path.name == "watermark.js"):
+                if path.is_file() and (path.suffix == ".py" or path.name in ("watermark.js", "logo-dark.svg")):
                     output.add(path, arcname=f"player/{path.name}", recursive=False)
             output.add(requirements, arcname="requirements.txt", recursive=False)
             for path in files:

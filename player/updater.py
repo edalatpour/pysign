@@ -229,7 +229,8 @@ class Supervisor:
         )
         subprocess.run(
             [str(target / "venv/bin/python"), "-c",
-             "import player.__main__, websocket, segno"],
+             "import player.__main__, websocket, segno; "
+             "from player.browser import watermark_script; watermark_script()"],
             check=True, timeout=30, cwd=target,
         )
         sync_tree(target)
@@ -360,7 +361,9 @@ def bootstrap(home, state_dir, server, arguments, public_key):
              "--only-binary=:all:", "--no-deps", *PLAYER_REQUIREMENTS], check=True, timeout=180,
         )
         subprocess.run(
-            [str(release / "venv/bin/python"), "-c", "import player.__main__, websocket, segno"],
+            [str(release / "venv/bin/python"), "-c",
+             "import player.__main__, websocket, segno; "
+             "from player.browser import watermark_script; watermark_script()"],
             cwd=release, check=True, timeout=30,
         )
     except (OSError, shutil.Error, subprocess.SubprocessError):

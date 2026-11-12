@@ -90,7 +90,8 @@ def main():
             return result
 
         save_svg("logo-light.svg", 540, 176, lockup(INK), "PiSign - logo for light backgrounds")
-        save_svg("logo-dark.svg", 540, 176, lockup(WHITE), "PiSign - logo for dark backgrounds")
+        dark_logo = save_svg("logo-dark.svg", 540, 176, lockup(WHITE), "PiSign - logo for dark backgrounds")
+        (ROOT / "player" / "logo-dark.svg").write_text(dark_logo, encoding="utf-8")
         for name, color in (("ink", INK), ("white", "#ffffff")):
             save_svg(
                 f"mark-{name}.svg", 256, 256, emblem(0, 0, 256, color),

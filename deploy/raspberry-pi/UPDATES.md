@@ -286,6 +286,13 @@ It creates `player-1.json` and `player-1.tar.gz` for sequence 1.
 The private key is not included. The player installs dependencies offline with
 `--require-hashes --no-index`. Existing output files are not overwritten.
 
+Player branding is bundled under `player/` in both the bootstrap and release
+archive, so installed players do not need the repository checkout. Existing
+supervisors accept this archive layout; they do not need to be reinstalled.
+An already-installed bootstrap is not changed by building a release. If an
+older bootstrap is missing its branding, use a repaired bootstrap or publish
+and test a corrected release; do not delete the updater, trust key, or journal.
+
 Test the signed artifact on your supported Pi/OS combinations before production
 publication, using a separate test server and test device with the same trusted
 public key. Include cached offline playback and failed-start rollback.
